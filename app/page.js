@@ -40,7 +40,6 @@ export default function MatrixDashboard() {
 
   useEffect(() => {
     fetchPicks();
-    // Auto-refresh every 45s during game days
     const interval = setInterval(() => {
       fetchPicks(true);
     }, 45000);
@@ -100,10 +99,10 @@ export default function MatrixDashboard() {
       const isPickWinning = (sc.leader === pickObj.side);
       if (isFinished) {
         if (isPickWinning) {
-          border = '1px solid #22c55e'; // Green win border
+          border = '1px solid #22c55e';
         } else {
-          border = '1px solid #ef444455'; // Faded red border
-          opacity = '0.55'; // Dim losing pick
+          border = '1px solid #ef444455';
+          opacity = '0.55';
         }
       } else if (isLive) {
         if (isPickWinning) {
@@ -156,35 +155,34 @@ export default function MatrixDashboard() {
           position: sticky;
           left: 0;
           z-index: 20;
-          width: 125px;
-          min-width: 125px;
-          max-width: 125px;
+          width: 118px;
+          min-width: 118px;
+          max-width: 118px;
         }
         .col-pinned {
           position: sticky;
-          left: 125px;
+          left: 118px;
           z-index: 20;
-          width: 88px;
-          min-width: 88px;
-          max-width: 88px;
+          width: 84px;
+          min-width: 84px;
+          max-width: 84px;
         }
         .col-other {
-          min-width: 84px;
-          width: 84px;
+          min-width: 80px;
+          width: 80px;
         }
         .pill-box {
           display: inline-flex;
           align-items: center;
-          justify-content: center;
+          justify-content: flex-start;
           gap: 3px;
           padding: 3px 6px;
           border-radius: 12px;
           font-size: 11px;
           font-weight: 700;
-          max-width: 78px;
+          max-width: 76px;
           white-space: nowrap;
           overflow: hidden;
-          text-overflow: ellipsis;
         }
         .badge-pts {
           padding: 1px 4px;
@@ -195,30 +193,25 @@ export default function MatrixDashboard() {
 
         @media (min-width: 768px) {
           .col-match {
-            width: 180px;
-            min-width: 180px;
-            max-width: 180px;
+            width: 175px;
+            min-width: 175px;
+            max-width: 175px;
           }
           .col-pinned {
-            left: 180px;
-            width: 120px;
-            min-width: 120px;
-            max-width: 120px;
+            left: 175px;
+            width: 115px;
+            min-width: 115px;
+            max-width: 115px;
           }
           .col-other {
-            min-width: 115px;
-            width: 115px;
+            min-width: 110px;
+            width: 110px;
           }
           .pill-box {
-            padding: 4px 10px;
-            border-radius: 18px;
+            padding: 4px 8px;
+            border-radius: 16px;
             font-size: 12px;
             max-width: 105px;
-          }
-          .badge-pts {
-            padding: 1px 5px;
-            border-radius: 10px;
-            font-size: 10px;
           }
         }
       `}} />
@@ -275,19 +268,17 @@ export default function MatrixDashboard() {
               const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
               const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
 
-              // Consensus Split
-              const counts = {};
+              // Consensus tally (without long names)
+              const counts = { away: 0, home: 0 };
               allUsers.forEach(u => {
                 const p = pickMap[u]?.[prId];
-                const team = resolveTeamName(p, prId);
-                if (team !== '—') counts[team] = (counts[team] || 0) + 1;
+                if (p?.side === 'away') counts.away++;
+                if (p?.side === 'home') counts.home++;
               });
-              const splitText = Object.keys(counts).map(k => `${k}: ${counts[k]}`).join(' vs ') || 'No picks';
 
               const pinnedPick = pickMap[pinnedUser]?.[prId];
               const pinnedTeam = resolveTeamName(pinnedPick, prId);
 
-              // Score data
               const sc = propInfo.score;
               const isLive = sc?.state === 'in';
               const isFinal = sc?.state === 'post';
@@ -296,26 +287,26 @@ export default function MatrixDashboard() {
                 <tr key={prId} style={{ background: rowBg }}>
                   {/* Column 1: Stacked Scoreboard */}
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team Row */}
+                    {/* Away Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85px' }}>{propInfo.away}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>{propInfo.away}</span>
                       <span>{sc?.awayScore ?? ''}</span>
                     </div>
 
-                    {/* Home Team Row */}
+                    {/* Home Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85px' }}>@{propInfo.home}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>@{propInfo.home}</span>
                       <span>{sc?.homeScore ?? ''}</span>
                     </div>
 
-                    {/* Clock & Split */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px', fontSize: '9px', fontWeight: 600 }}>
+                    {/* Clock & Clean Split Ratio */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
                       </span>
-                    </div>
-                    <div style={{ fontSize: '9px', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      📊 {splitText}
+                      {(counts.away > 0 || counts.home > 0) && (
+                        <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span>
+                      )}
                     </div>
                   </td>
 
@@ -325,7 +316,7 @@ export default function MatrixDashboard() {
                       <span style={{ color: '#475569' }}>—</span>
                     ) : (
                       <div className="pill-box" style={getPillCustomStyle(pinnedPick, prId)}>
-                        <span>{pinnedTeam}</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{pinnedTeam}</span>
                         {pinnedPick?.pts && (
                           <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pinnedPick.pts}</span>
                         )}
@@ -343,7 +334,7 @@ export default function MatrixDashboard() {
                           <span style={{ color: '#475569' }}>—</span>
                         ) : (
                           <div className="pill-box" style={getPillCustomStyle(pick, prId)}>
-                            <span>{team}</span>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{team}</span>
                             {pick?.pts && (
                               <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.18)' }}>{pick.pts}</span>
                             )}
