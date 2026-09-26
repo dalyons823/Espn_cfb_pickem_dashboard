@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 const ABBR_FALLBACKS = {
   'boise state': 'BSU',
@@ -90,11 +90,87 @@ export default function MatrixDashboard() {
     }
   };
 
+  const { weekBlocks = [], propMap = {}, pickMap = {}, userOverallScores = {} } = data || {};
+  const activeProps = weekBlocks[selectedWeek] || [];
+  const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
+  const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
+
+  const resolveTeamName = (pickObj, prId) => {
+    const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home' };
+    if (!pickObj || !pickObj.side) return '—';
+    const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
+    return formatAbbr(raw);
+  };
+
+  // Calculate live points, locked points, and max potential
+  const userStats = useMemo(() => {
+    const stats = {};
+    allUsers.forEach(u => {
+      let weekWonPts = 0;
+      let weekLiveLeadingPts = 0;
+      let weekLostPts = 0;
+      let totalAssignedPts = 0;
+
+      activeProps.forEach(prId => {
+        const p = pickMap[u]?.[prId];
+        const pts = p?.pts || 0;
+        totalAssignedPts += pts;
+
+        const propInfo = propMap[prId] || propMap[prId.slice(0, 7)];
+        const sc = propInfo?.score;
+        const isFinal = sc?.state === 'post';
+        const isLive = sc?.state === 'in';
+        const leader = sc?.leader;
+
+        if (isFinal) {
+          if (p?.side && leader && p.side === leader) {
+            weekWonPts += pts;
+          } else {
+            weekLostPts += pts;
+          }
+        } else if (isLive) {
+          if (p?.side && leader && p.side === leader) {
+            weekLiveLeadingPts += pts;
+          }
+        }
+      });
+
+      const liveTotalPts = weekWonPts + weekLiveLeadingPts;
+      const maxPotential = (totalAssignedPts > 0 ? totalAssignedPts : 55) - weekLostPts;
+      const overallScore = userOverallScores?.[u] ?? null;
+
+      stats[u] = {
+        weekWonPts,
+        weekLiveLeadingPts,
+        liveTotalPts,
+        maxPotential,
+        overallScore
+      };
+    });
+    return stats;
+  }, [allUsers, activeProps, pickMap, propMap, userOverallScores]);
+
+  // Sort other participants descending by standing / live total
+  const sortedUnpinnedUsers = useMemo(() => {
+    return [...unpinnedUsers].sort((a, b) => {
+      const statsA = userStats[a] || { liveTotalPts: 0, overallScore: null, maxPotential: 0 };
+      const statsB = userStats[b] || { liveTotalPts: 0, overallScore: null, maxPotential: 0 };
+
+      if (statsA.overallScore !== null && statsB.overallScore !== null && statsA.overallScore !== statsB.overallScore) {
+        return statsB.overallScore - statsA.overallScore;
+      }
+      if (statsB.liveTotalPts !== statsA.liveTotalPts) {
+        return statsB.liveTotalPts - statsA.liveTotalPts;
+      }
+      return statsB.maxPotential - statsA.maxPotential;
+    });
+  }, [unpinnedUsers, userStats]);
+
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#0b1120' }}>
         <div style={{ fontSize: '30px', marginBottom: '10px' }}>🏈</div>
-        <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 600 }}>Syncing scores & picks...</div>
+        <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 600 }}>Syncing scores & standings...</div>
       </div>
     );
   }
@@ -106,18 +182,6 @@ export default function MatrixDashboard() {
       </div>
     );
   }
-
-  const { weekBlocks, propMap, pickMap } = data;
-  const allUsers = [data.myUser, ...(data.otherUsers || [])].filter(Boolean);
-  const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
-  const activeProps = weekBlocks[selectedWeek] || [];
-
-  const resolveTeamName = (pickObj, prId) => {
-    const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home' };
-    if (!pickObj || !pickObj.side) return '—';
-    const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
-    return formatAbbr(raw);
-  };
 
   const getPillCustomStyle = (pickObj, prId) => {
     const team = resolveTeamName(pickObj, prId);
@@ -163,7 +227,7 @@ export default function MatrixDashboard() {
   };
 
   const exportCSV = () => {
-    const exportUsers = [pinnedUser, ...unpinnedUsers];
+    const exportUsers = [pinnedUser, ...sortedUnpinnedUsers];
     let csv = 'Matchup,' + exportUsers.map(u => `"${u.replace(/"/g, '""')}"`).join(',') + '\n';
 
     activeProps.forEach((prId, gIdx) => {
@@ -179,12 +243,27 @@ export default function MatrixDashboard() {
       csv += row.join(',') + '\n';
     });
 
+    // Append summary rows
+    const totalRow = ['"Week Total"'];
+    exportUsers.forEach(u => {
+      totalRow.push(`"${userStats[u]?.liveTotalPts || 0}"`);
+    });
+    csv += totalRow.join(',') + '\n';
+
+    const maxRow = ['"Max Potential"'];
+    exportUsers.forEach(u => {
+      maxRow.push(`"${userStats[u]?.maxPotential || 0}"`);
+    });
+    csv += maxRow.join(',') + '\n';
+
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `cfb_pickem_week_${selectedWeek + 1}.csv`;
     link.click();
   };
+
+  const pinnedStats = userStats[pinnedUser] || { liveTotalPts: 0, maxPotential: 55, weekLiveLeadingPts: 0 };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -201,24 +280,24 @@ export default function MatrixDashboard() {
           position: sticky;
           left: 118px;
           z-index: 20;
-          width: 84px;
-          min-width: 84px;
-          max-width: 84px;
+          width: 86px;
+          min-width: 86px;
+          max-width: 86px;
         }
         .col-other {
-          min-width: 80px;
-          width: 80px;
+          min-width: 82px;
+          width: 82px;
         }
         .pill-box {
           display: inline-flex;
           align-items: center;
-          justify-content: center;
+          justify-content: flex-start;
           gap: 3px;
           padding: 3px 6px;
           border-radius: 12px;
           font-size: 11px;
           font-weight: 700;
-          max-width: 76px;
+          max-width: 78px;
           white-space: nowrap;
           overflow: hidden;
         }
@@ -237,13 +316,13 @@ export default function MatrixDashboard() {
           }
           .col-pinned {
             left: 175px;
-            width: 115px;
-            min-width: 115px;
-            max-width: 115px;
+            width: 120px;
+            min-width: 120px;
+            max-width: 120px;
           }
           .col-other {
-            min-width: 110px;
-            width: 110px;
+            min-width: 115px;
+            width: 115px;
           }
           .pill-box {
             padding: 4px 8px;
@@ -291,14 +370,23 @@ export default function MatrixDashboard() {
               <th className="col-match" style={{ padding: '8px 10px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', color: '#93c5fd', fontWeight: 700 }}>
                 Score / Matchup
               </th>
-              <th className="col-pinned" style={{ padding: '8px 4px', background: '#1e293b', borderBottom: '2px solid #f59e0b', borderRight: '2px solid #f59e0b', color: '#f59e0b', fontWeight: 700, textAlign: 'center' }}>
-                ⭐ {pinnedUser}
+              
+              {/* Pinned User Header */}
+              <th className="col-pinned" style={{ padding: '8px 4px', background: '#1e293b', borderBottom: '2px solid #f59e0b', borderRight: '2px solid #f59e0b', color: '#f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>⭐ {pinnedUser}</div>
+                <div style={{ fontSize: '10px', color: '#fcd34d', fontWeight: 700 }}>({pinnedStats.liveTotalPts} pts)</div>
               </th>
-              {unpinnedUsers.map(u => (
-                <th key={u} className="col-other" style={{ padding: '8px 6px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', color: '#e2e8f0', fontWeight: 600, textAlign: 'center' }}>
-                  {u}
-                </th>
-              ))}
+
+              {/* Sorted Competitors Headers */}
+              {sortedUnpinnedUsers.map(u => {
+                const st = userStats[u] || { liveTotalPts: 0 };
+                return (
+                  <th key={u} className="col-other" style={{ padding: '8px 6px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', color: '#e2e8f0', textAlign: 'center' }}>
+                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '78px' }}>{u}</div>
+                    <div style={{ fontSize: '10px', color: '#93c5fd', fontWeight: 600 }}>({st.liveTotalPts} pts)</div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -327,19 +415,16 @@ export default function MatrixDashboard() {
                 <tr key={prId} style={{ background: rowBg }}>
                   {/* Column 1: Stacked Scoreboard */}
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>{awayLabel}</span>
                       <span>{sc?.awayScore ?? ''}</span>
                     </div>
 
-                    {/* Home Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>@{homeLabel}</span>
                       <span>{sc?.homeScore ?? ''}</span>
                     </div>
 
-                    {/* Clock & Split Ratio */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
@@ -364,8 +449,8 @@ export default function MatrixDashboard() {
                     )}
                   </td>
 
-                  {/* Other Competitors */}
-                  {unpinnedUsers.map(u => {
+                  {/* Sorted Competitors */}
+                  {sortedUnpinnedUsers.map(u => {
                     const pick = pickMap[u]?.[prId];
                     const team = resolveTeamName(pick, prId);
                     return (
@@ -386,6 +471,50 @@ export default function MatrixDashboard() {
                 </tr>
               );
             })}
+
+            {/* Summary Row 1: Week Total */}
+            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '8px 10px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px' }}>Week Total</div>
+                <div style={{ fontSize: '9px', color: '#94a3b8' }}>Live / Won Pts</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#38bdf8' }}>{pinnedStats.liveTotalPts}</div>
+                {pinnedStats.weekLiveLeadingPts > 0 && (
+                  <div style={{ fontSize: '8px', color: '#22c55e' }}>+{pinnedStats.weekLiveLeadingPts} live</div>
+                )}
+              </td>
+              {sortedUnpinnedUsers.map(u => {
+                const st = userStats[u] || { liveTotalPts: 0, weekLiveLeadingPts: 0 };
+                return (
+                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#38bdf8' }}>{st.liveTotalPts}</div>
+                    {st.weekLiveLeadingPts > 0 && (
+                      <div style={{ fontSize: '8px', color: '#22c55e' }}>+{st.weekLiveLeadingPts} live</div>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Summary Row 2: Max Potential */}
+            <tr style={{ background: '#0b1120' }}>
+              <td className="col-match" style={{ padding: '8px 10px', background: '#0b1120', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#f59e0b', fontSize: '11px' }}>Max Potential</div>
+                <div style={{ fontSize: '9px', color: '#94a3b8' }}>Max Possible Pts</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#f59e0b' }}>{pinnedStats.maxPotential}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => {
+                const st = userStats[u] || { maxPotential: 55 };
+                return (
+                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#fbbf24' }}>{st.maxPotential}</div>
+                  </td>
+                );
+              })}
+            </tr>
           </tbody>
         </table>
       </div>
