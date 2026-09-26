@@ -2,6 +2,43 @@
 
 import { useState, useEffect } from 'react';
 
+const ABBR_FALLBACKS = {
+  'boise state': 'BSU',
+  'western michigan': 'WMU',
+  'michigan state': 'MSU',
+  'james madison': 'JMU',
+  'old dominion': 'ODU',
+  'ole miss': 'MISS',
+  'florida': 'FLA',
+  'michigan': 'MICH',
+  'iowa': 'IOWA',
+  'texas': 'TEX',
+  'tennessee': 'TENN',
+  'nebraska': 'NEB',
+  'oklahoma': 'OU',
+  'georgia': 'UGA',
+  'notre dame': 'ND',
+  'purdue': 'PUR',
+  'utah': 'UTAH',
+  'iowa state': 'ISU',
+  'houston': 'HOU',
+  'georgia southern': 'GASO',
+  'illinois': 'ILL',
+  'ohio state': 'OSU',
+  'sam houston': 'SHSU',
+  'texas tech': 'TTU',
+  'wake forest': 'WAKE',
+  'louisville': 'LOU',
+  'west virginia': 'WVU',
+  'oklahoma state': 'OKST',
+};
+
+function formatAbbr(name) {
+  if (!name) return '—';
+  const clean = name.trim().toLowerCase();
+  return ABBR_FALLBACKS[clean] || name;
+}
+
 export default function MatrixDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -78,7 +115,8 @@ export default function MatrixDashboard() {
   const resolveTeamName = (pickObj, prId) => {
     const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home' };
     if (!pickObj || !pickObj.side) return '—';
-    return pickObj.side === 'away' ? propInfo.away : propInfo.home;
+    const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
+    return formatAbbr(raw);
   };
 
   const getPillCustomStyle = (pickObj, prId) => {
@@ -174,7 +212,7 @@ export default function MatrixDashboard() {
         .pill-box {
           display: inline-flex;
           align-items: center;
-          justify-content: flex-start;
+          justify-content: center;
           gap: 3px;
           padding: 3px 6px;
           border-radius: 12px;
@@ -268,7 +306,6 @@ export default function MatrixDashboard() {
               const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
               const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
 
-              // Consensus tally (without long names)
               const counts = { away: 0, home: 0 };
               allUsers.forEach(u => {
                 const p = pickMap[u]?.[prId];
@@ -283,23 +320,26 @@ export default function MatrixDashboard() {
               const isLive = sc?.state === 'in';
               const isFinal = sc?.state === 'post';
 
+              const awayLabel = formatAbbr(propInfo.away);
+              const homeLabel = formatAbbr(propInfo.home);
+
               return (
                 <tr key={prId} style={{ background: rowBg }}>
                   {/* Column 1: Stacked Scoreboard */}
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
                     {/* Away Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>{propInfo.away}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>{awayLabel}</span>
                       <span>{sc?.awayScore ?? ''}</span>
                     </div>
 
                     {/* Home Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>@{propInfo.home}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '78px' }}>@{homeLabel}</span>
                       <span>{sc?.homeScore ?? ''}</span>
                     </div>
 
-                    {/* Clock & Clean Split Ratio */}
+                    {/* Clock & Split Ratio */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
