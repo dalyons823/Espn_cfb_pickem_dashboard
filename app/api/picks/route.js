@@ -6,7 +6,7 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard to capture scores, game clocks, and quarters
+    // 1. Fetch live scoreboard
     const liveScores = {};
     try {
       const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard', {
@@ -19,29 +19,45 @@ export async function GET() {
           if (!comp) return;
           const away = comp.competitors?.find(c => c.homeAway === 'away');
           const home = comp.competitors?.find(c => c.homeAway === 'home');
-          const awayAbbr = (away?.team?.abbreviation || '').toUpperCase();
-          const homeAbbr = (home?.team?.abbreviation || '').toUpperCase();
-          const awayName = (away?.team?.shortDisplayName || away?.team?.name || '').toUpperCase();
-          const homeName = (home?.team?.shortDisplayName || home?.team?.name || '').toUpperCase();
           
+          const aScore = away?.score !== undefined ? parseInt(away.score, 10) : null;
+          const hScore = home?.score !== undefined ? parseInt(home.score, 10) : null;
+          const state = ev.status?.type?.state || 'pre'; // 'pre', 'in', 'post'
+
+          let leader = null;
+          if (aScore !== null && hScore !== null) {
+            if (aScore > hScore) leader = 'away';
+            else if (hScore > aScore) leader = 'home';
+            else leader = 'tie';
+          }
+
           const scoreInfo = {
             awayScore: away?.score ?? '',
             homeScore: home?.score ?? '',
             statusDetail: ev.status?.type?.shortDetail || '',
-            state: ev.status?.type?.state || 'pre' // 'pre', 'in', 'post'
+            state,
+            leader
           };
 
-          if (awayAbbr) liveScores[awayAbbr] = scoreInfo;
-          if (homeAbbr) liveScores[homeAbbr] = scoreInfo;
-          if (awayName) liveScores[awayName] = scoreInfo;
-          if (homeName) liveScores[homeName] = scoreInfo;
+          const keys = [
+            away?.team?.abbreviation,
+            home?.team?.abbreviation,
+            away?.team?.shortDisplayName,
+            home?.team?.shortDisplayName,
+            away?.team?.name,
+            home?.team?.name
+          ].filter(Boolean);
+
+          keys.forEach(k => {
+            liveScores[k.toUpperCase()] = scoreInfo;
+          });
         });
       }
     } catch (e) {
-      console.error("Scoreboard fetch error:", e);
+      console.error("Scoreboard error:", e);
     }
 
-    // 2. Fetch challenge propositions (matchups & teams)
+    // 2. Fetch propositions (teams & matchups)
     const propMap = {};
     try {
       const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_ID}`, {
@@ -53,18 +69,23 @@ export async function GET() {
           const outcomes = p.possibleOutcomes || p.outcomes || [];
           const away = outcomes[0]?.name || outcomes[0]?.abbreviation || outcomes[0]?.caption || 'Away';
           const home = outcomes[1]?.name || outcomes[1]?.abbreviation || outcomes[1]?.caption || 'Home';
-          const title = p.description || p.name || `${away} @ ${home}`;
-
-          // Match live score
+          
+          // Match score by team name or abbreviation
           const score = liveScores[away.toUpperCase()] || liveScores[home.toUpperCase()] || null;
 
-          propMap[p.id] = { title, away, home, score };
-          propMap[p.id.slice(0, 7)] = { title, away, home, score };
+          const propObj = {
+            away,
+            home,
+            title: `${away} @ ${home}`,
+            score
+          };
+          propMap[p.id] = propObj;
+          propMap[p.id.slice(0, 7)] = propObj;
         });
       }
     } catch (e) {}
 
-    // 3. Fetch Group Roster
+    // 3. Fetch Group
     const groupRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`, {
       next: { revalidate: 60 }
     });
@@ -72,7 +93,7 @@ export async function GET() {
     const gData = await groupRes.json();
     const entries = gData.entries || [];
 
-    // 4. Fetch each entry's picks
+    // 4. Fetch Picks
     const users = [];
     let myUser = null;
     const otherUsers = [];
@@ -89,9 +110,9 @@ export async function GET() {
       return { userName, picks: eData.picks || [] };
     });
 
-    const settledEntries = await Promise.all(entryPromises);
+    const settled = await Promise.all(entryPromises);
 
-    settledEntries.forEach(({ userName, picks }) => {
+    settled.forEach(({ userName, picks }) => {
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
         myUser = userName;
       } else {
