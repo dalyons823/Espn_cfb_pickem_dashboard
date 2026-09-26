@@ -148,7 +148,7 @@ export async function GET() {
       }
     } catch (e) {}
 
-    // 3. Fetch Group
+    // 3. Fetch Group Leaderboard & Season Scores
     const groupRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`, {
       next: { revalidate: 60 }
     });
@@ -156,40 +156,46 @@ export async function GET() {
     const gData = await groupRes.json();
     const entries = gData.entries || [];
 
-    // 4. Fetch Picks & Capture Season Standings
+    // 4. Fetch Picks & Extract Overall Yearly Total
     const users = [];
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
     const allPropIds = [];
-    const userOverallScores = {};
+    const userYearlyScores = {};
+
+    function extractScore(obj) {
+      if (!obj) return null;
+      if (typeof obj === 'number') return obj;
+      if (typeof obj.value === 'number') return obj.value;
+      if (typeof obj.score === 'number') return obj.score;
+      if (typeof obj.points === 'number') return obj.points;
+      if (typeof obj.overallScore === 'number') return obj.overallScore;
+      if (typeof obj.totalPoints === 'number') return obj.totalPoints;
+      return null;
+    }
 
     const entryPromises = entries.map(async (e) => {
       const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
-      let scoreVal = null;
-      if (typeof e.score === 'number') scoreVal = e.score;
-      else if (e.score?.value !== undefined) scoreVal = e.score.value;
-      else if (typeof e.points === 'number') scoreVal = e.points;
-      else if (typeof e.overallScore === 'number') scoreVal = e.overallScore;
+      let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const eRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}`, {
         next: { revalidate: 60 }
       });
-      if (!eRes.ok) return { userName, picks: [], scoreVal };
+      if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0 };
       const eData = await eRes.json();
+      
       if (scoreVal === null) {
-        if (typeof eData.score === 'number') scoreVal = eData.score;
-        else if (eData.score?.value !== undefined) scoreVal = eData.score.value;
-        else if (typeof eData.overallScore === 'number') scoreVal = eData.overallScore;
-        else if (typeof eData.points === 'number') scoreVal = eData.points;
+        scoreVal = extractScore(eData.score) ?? extractScore(eData.points) ?? extractScore(eData.overallScore) ?? extractScore(eData) ?? 0;
       }
-      return { userName, picks: eData.picks || [], scoreVal };
+
+      return { userName, picks: eData.picks || [], scoreVal: scoreVal || 0 };
     });
 
     const settled = await Promise.all(entryPromises);
 
     settled.forEach(({ userName, picks, scoreVal }) => {
-      userOverallScores[userName] = scoreVal;
+      userYearlyScores[userName] = scoreVal;
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
         myUser = userName;
       } else {
@@ -238,7 +244,7 @@ export async function GET() {
       weekBlocks,
       propMap,
       pickMap,
-      userOverallScores
+      userYearlyScores
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
