@@ -9,9 +9,9 @@ export default function MatrixDashboard() {
   const [selectedWeek, setSelectedWeek] = useState(0);
   const [pinnedUser, setPinnedUser] = useState('');
 
-  const fetchPicks = async () => {
+  const fetchPicks = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const res = await fetch('/api/picks');
       if (!res.ok) throw new Error('Failed to load picks');
       const json = await res.json();
@@ -20,24 +20,31 @@ export default function MatrixDashboard() {
       const allMembers = [json.myUser, ...(json.otherUsers || [])].filter(Boolean);
       const savedUser = typeof window !== 'undefined' ? localStorage.getItem('cfb_pinned_user') : null;
 
-      if (savedUser && allMembers.includes(savedUser)) {
-        setPinnedUser(savedUser);
-      } else {
-        setPinnedUser(json.myUser || allMembers[0] || '');
-      }
+      if (!isBackground) {
+        if (savedUser && allMembers.includes(savedUser)) {
+          setPinnedUser(savedUser);
+        } else {
+          setPinnedUser(json.myUser || allMembers[0] || '');
+        }
 
-      if (json.weekBlocks?.length) {
-        setSelectedWeek(json.weekBlocks.length - 1);
+        if (json.weekBlocks?.length) {
+          setSelectedWeek(json.weekBlocks.length - 1);
+        }
       }
     } catch (err) {
-      setError(err.message);
+      if (!isBackground) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchPicks();
+    // Auto-refresh every 45s during game days
+    const interval = setInterval(() => {
+      fetchPicks(true);
+    }, 45000);
+    return () => clearInterval(interval);
   }, []);
 
   const handlePinnedUserChange = (newUser) => {
@@ -69,23 +76,53 @@ export default function MatrixDashboard() {
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
   const activeProps = weekBlocks[selectedWeek] || [];
 
-  const getPillStyle = (team) => {
-    if (!team || team === '—') return { background: '#1e293b', color: '#64748b', border: '1px solid #334155' };
-    let hash = 0;
-    for (let i = 0; i < team.length; i++) hash = team.charCodeAt(i) + ((hash << 5) - hash);
-    const hues = [210, 150, 270, 25, 190, 340, 45, 120, 290];
-    const hue = hues[Math.abs(hash) % hues.length];
-    return {
-      background: `hsl(${hue}, 40%, 16%)`,
-      color: `hsl(${hue}, 85%, 75%)`,
-      border: `1px solid hsl(${hue}, 50%, 25%)`
-    };
-  };
-
   const resolveTeamName = (pickObj, prId) => {
     const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home' };
     if (!pickObj || !pickObj.side) return '—';
     return pickObj.side === 'away' ? propInfo.away : propInfo.home;
+  };
+
+  const getPillCustomStyle = (pickObj, prId) => {
+    const team = resolveTeamName(pickObj, prId);
+    if (!team || team === '—') {
+      return { background: '#1e293b', color: '#64748b', border: '1px solid #334155' };
+    }
+
+    const propInfo = propMap[prId] || propMap[prId.slice(0, 7)];
+    const sc = propInfo?.score;
+    const isFinished = sc?.state === 'post';
+    const isLive = sc?.state === 'in';
+
+    let border = '1px solid transparent';
+    let opacity = '1';
+
+    if (sc?.leader && pickObj?.side) {
+      const isPickWinning = (sc.leader === pickObj.side);
+      if (isFinished) {
+        if (isPickWinning) {
+          border = '1px solid #22c55e'; // Green win border
+        } else {
+          border = '1px solid #ef444455'; // Faded red border
+          opacity = '0.55'; // Dim losing pick
+        }
+      } else if (isLive) {
+        if (isPickWinning) {
+          border = '1px solid #22c55e88';
+        }
+      }
+    }
+
+    let hash = 0;
+    for (let i = 0; i < team.length; i++) hash = team.charCodeAt(i) + ((hash << 5) - hash);
+    const hues = [210, 150, 270, 25, 190, 340, 45, 120, 290];
+    const hue = hues[Math.abs(hash) % hues.length];
+
+    return {
+      background: `hsl(${hue}, 40%, 16%)`,
+      color: `hsl(${hue}, 85%, 75%)`,
+      border: border !== '1px solid transparent' ? border : `1px solid hsl(${hue}, 50%, 25%)`,
+      opacity
+    };
   };
 
   const exportCSV = () => {
@@ -119,58 +156,64 @@ export default function MatrixDashboard() {
           position: sticky;
           left: 0;
           z-index: 20;
-          width: 135px;
-          min-width: 135px;
-          max-width: 135px;
+          width: 125px;
+          min-width: 125px;
+          max-width: 125px;
         }
         .col-pinned {
           position: sticky;
-          left: 135px;
+          left: 125px;
           z-index: 20;
-          width: 90px;
-          min-width: 90px;
-          max-width: 90px;
+          width: 88px;
+          min-width: 88px;
+          max-width: 88px;
         }
         .col-other {
-          min-width: 82px;
-          width: 82px;
+          min-width: 84px;
+          width: 84px;
         }
         .pill-box {
           display: inline-flex;
           align-items: center;
-          gap: 4px;
-          padding: 2px 6px;
+          justify-content: center;
+          gap: 3px;
+          padding: 3px 6px;
           border-radius: 12px;
           font-size: 11px;
           font-weight: 700;
+          max-width: 78px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .badge-pts {
           padding: 1px 4px;
           border-radius: 8px;
           font-size: 9px;
+          font-weight: 800;
         }
 
         @media (min-width: 768px) {
           .col-match {
-            width: 220px;
-            min-width: 220px;
-            max-width: 220px;
+            width: 180px;
+            min-width: 180px;
+            max-width: 180px;
           }
           .col-pinned {
-            left: 220px;
-            width: 130px;
-            min-width: 130px;
-            max-width: 130px;
+            left: 180px;
+            width: 120px;
+            min-width: 120px;
+            max-width: 120px;
           }
           .col-other {
-            min-width: 120px;
-            width: 120px;
+            min-width: 115px;
+            width: 115px;
           }
           .pill-box {
             padding: 4px 10px;
-            border-radius: 20px;
+            border-radius: 18px;
             font-size: 12px;
-            gap: 6px;
+            max-width: 105px;
           }
           .badge-pts {
             padding: 1px 5px;
@@ -183,7 +226,7 @@ export default function MatrixDashboard() {
       {/* Header Bar */}
       <div style={{ padding: '8px 12px', background: '#111827', borderBottom: '1px solid #1f2937', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-          <span style={{ fontSize: '15px', fontWeight: 800, whiteSpace: 'nowrap' }}>🏈 Pick'em</span>
+          <span style={{ fontSize: '15px', fontWeight: 800 }}>🏈 Pick'em</span>
           <select
             value={selectedWeek}
             onChange={(e) => setSelectedWeek(Number(e.target.value))}
@@ -196,7 +239,7 @@ export default function MatrixDashboard() {
           <select
             value={pinnedUser}
             onChange={(e) => handlePinnedUserChange(e.target.value)}
-            style={{ background: '#0f172a', color: '#f59e0b', border: '1px solid #d97706', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700, maxWidth: '110px' }}
+            style={{ background: '#0f172a', color: '#f59e0b', border: '1px solid #d97706', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700, maxWidth: '115px' }}
           >
             {allUsers.map(u => (
               <option key={u} value={u}>{u}</option>
@@ -204,7 +247,7 @@ export default function MatrixDashboard() {
           </select>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
-          <button onClick={fetchPicks} style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
+          <button onClick={() => fetchPicks(false)} style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
           <button onClick={exportCSV} style={{ background: '#334155', border: '1px solid #475569', color: '#fff', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>📥 CSV</button>
         </div>
       </div>
@@ -215,13 +258,13 @@ export default function MatrixDashboard() {
           <thead>
             <tr style={{ position: 'sticky', top: 0, zIndex: 30 }}>
               <th className="col-match" style={{ padding: '8px 10px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', color: '#93c5fd', fontWeight: 700 }}>
-                Matchup / Live
+                Score / Matchup
               </th>
-              <th className="col-pinned" style={{ padding: '8px 6px', background: '#1e293b', borderBottom: '2px solid #f59e0b', borderRight: '2px solid #f59e0b', color: '#f59e0b', fontWeight: 700, textAlign: 'center' }}>
+              <th className="col-pinned" style={{ padding: '8px 4px', background: '#1e293b', borderBottom: '2px solid #f59e0b', borderRight: '2px solid #f59e0b', color: '#f59e0b', fontWeight: 700, textAlign: 'center' }}>
                 ⭐ {pinnedUser}
               </th>
               {unpinnedUsers.map(u => (
-                <th key={u} className="col-other" style={{ padding: '8px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', color: '#e2e8f0', fontWeight: 600, textAlign: 'center' }}>
+                <th key={u} className="col-other" style={{ padding: '8px 6px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', color: '#e2e8f0', fontWeight: 600, textAlign: 'center' }}>
                   {u}
                 </th>
               ))}
@@ -229,7 +272,7 @@ export default function MatrixDashboard() {
           </thead>
           <tbody>
             {activeProps.map((prId, gIdx) => {
-              const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { title: `Game #${gIdx + 1}`, away: 'Away', home: 'Home', score: null };
+              const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
               const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
 
               // Consensus Split
@@ -244,45 +287,44 @@ export default function MatrixDashboard() {
               const pinnedPick = pickMap[pinnedUser]?.[prId];
               const pinnedTeam = resolveTeamName(pinnedPick, prId);
 
-              // Live Score & Status formatting
+              // Score data
               const sc = propInfo.score;
-              const hasScore = sc && sc.awayScore !== '' && sc.homeScore !== '';
               const isLive = sc?.state === 'in';
               const isFinal = sc?.state === 'post';
 
               return (
                 <tr key={prId} style={{ background: rowBg }}>
-                  {/* Column 1: Matchup & Live Score */}
-                  <td className="col-match" style={{ padding: '8px 10px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    <div style={{ fontWeight: 700, color: '#f1f5f9', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {hasScore ? (
-                        <span>
-                          {propInfo.away} <b style={{ color: '#f8fafc' }}>{sc.awayScore}</b> @ {propInfo.home} <b style={{ color: '#f8fafc' }}>{sc.homeScore}</b>
-                        </span>
-                      ) : (
-                        propInfo.title
-                      )}
+                  {/* Column 1: Stacked Scoreboard */}
+                  <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
+                    {/* Away Team Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85px' }}>{propInfo.away}</span>
+                      <span>{sc?.awayScore ?? ''}</span>
                     </div>
-                    
-                    {/* Game Clock / Status */}
-                    {sc?.statusDetail && (
-                      <div style={{ fontSize: '10px', fontWeight: 600, marginTop: '2px', color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
-                        {isLive && '🔴 '}{sc.statusDetail}
-                      </div>
-                    )}
 
-                    {/* Consensus Split */}
-                    <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {/* Home Team Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85px' }}>@{propInfo.home}</span>
+                      <span>{sc?.homeScore ?? ''}</span>
+                    </div>
+
+                    {/* Clock & Split */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px', fontSize: '9px', fontWeight: 600 }}>
+                      <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
+                        {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '9px', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       📊 {splitText}
                     </div>
                   </td>
 
                   {/* Column 2: Pinned User */}
-                  <td className="col-pinned" style={{ padding: '6px 4px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: rowBg, textAlign: 'center' }}>
+                  <td className="col-pinned" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: rowBg, textAlign: 'center' }}>
                     {pinnedTeam === '—' ? (
                       <span style={{ color: '#475569' }}>—</span>
                     ) : (
-                      <div className="pill-box" style={getPillStyle(pinnedTeam)}>
+                      <div className="pill-box" style={getPillCustomStyle(pinnedPick, prId)}>
                         <span>{pinnedTeam}</span>
                         {pinnedPick?.pts && (
                           <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pinnedPick.pts}</span>
@@ -296,11 +338,11 @@ export default function MatrixDashboard() {
                     const pick = pickMap[u]?.[prId];
                     const team = resolveTeamName(pick, prId);
                     return (
-                      <td key={u} className="col-other" style={{ padding: '6px 4px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1e293b', textAlign: 'center', verticalAlign: 'middle' }}>
+                      <td key={u} className="col-other" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1e293b', textAlign: 'center', verticalAlign: 'middle' }}>
                         {team === '—' ? (
                           <span style={{ color: '#475569' }}>—</span>
                         ) : (
-                          <div className="pill-box" style={getPillStyle(team)}>
+                          <div className="pill-box" style={getPillCustomStyle(pick, prId)}>
                             <span>{team}</span>
                             {pick?.pts && (
                               <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.18)' }}>{pick.pts}</span>
