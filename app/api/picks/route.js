@@ -6,63 +6,102 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard for ALL FBS games (groups=80 covers all Division 1 FBS)
-    const liveScores = {};
+    // 1. Fetch live scoreboard + full week slate to catch all games
+    let allEvents = [];
     try {
-      const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=150', {
+      const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300', {
         next: { revalidate: 30 }
       });
       if (sbRes.ok) {
         const sbData = await sbRes.json();
-        (sbData.events || []).forEach(ev => {
-          const comp = ev.competitions?.[0];
-          if (!comp) return;
-          const away = comp.competitors?.find(c => c.homeAway === 'away');
-          const home = comp.competitors?.find(c => c.homeAway === 'home');
-          
-          const aScore = away?.score !== undefined ? parseInt(away.score, 10) : null;
-          const hScore = home?.score !== undefined ? parseInt(home.score, 10) : null;
-          const state = ev.status?.type?.state || 'pre'; // 'pre', 'in', 'post'
+        allEvents = sbData.events || [];
 
-          let leader = null;
-          if (aScore !== null && hScore !== null) {
-            if (aScore > hScore) leader = 'away';
-            else if (hScore > aScore) leader = 'home';
-            else leader = 'tie';
-          }
-
-          const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
-          const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
-
-          const scoreInfo = {
-            awayScore: away?.score ?? '',
-            homeScore: home?.score ?? '',
-            statusDetail: ev.status?.type?.shortDetail || '',
-            state,
-            leader,
-            awayAbbr,
-            homeAbbr
-          };
-
-          const keys = [
-            away?.team?.abbreviation,
-            home?.team?.abbreviation,
-            away?.team?.shortDisplayName,
-            home?.team?.shortDisplayName,
-            away?.team?.name,
-            home?.team?.name
-          ].filter(Boolean);
-
-          keys.forEach(k => {
-            liveScores[k.toUpperCase()] = scoreInfo;
+        // Also fetch the full week slate to catch earlier games
+        const weekNum = sbData.week?.number;
+        if (weekNum) {
+          const weekRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${weekNum}`, {
+            next: { revalidate: 30 }
           });
-        });
+          if (weekRes.ok) {
+            const weekData = await weekRes.json();
+            const existingIds = new Set(allEvents.map(e => e.id));
+            (weekData.events || []).forEach(ev => {
+              if (!existingIds.has(ev.id)) allEvents.push(ev);
+            });
+          }
+        }
       }
     } catch (e) {
       console.error("Scoreboard fetch error:", e);
     }
 
-    // 2. Fetch challenge propositions (matchups & teams)
+    // Process all events and extract every possible name variation
+    const parsedEvents = allEvents.map(ev => {
+      const comp = ev.competitions?.[0];
+      if (!comp) return null;
+      const away = comp.competitors?.find(c => c.homeAway === 'away');
+      const home = comp.competitors?.find(c => c.homeAway === 'home');
+
+      const aScore = away?.score !== undefined && away?.score !== '' ? parseInt(away.score, 10) : null;
+      const hScore = home?.score !== undefined && home?.score !== '' ? parseInt(home.score, 10) : null;
+      const state = ev.status?.type?.state || 'pre';
+
+      let leader = null;
+      if (aScore !== null && hScore !== null) {
+        if (aScore > hScore) leader = 'away';
+        else if (hScore > aScore) leader = 'home';
+        else leader = 'tie';
+      }
+
+      const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
+      const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
+
+      const collectNames = (teamObj) => {
+        if (!teamObj) return [];
+        return [
+          teamObj.abbreviation,
+          teamObj.shortDisplayName,
+          teamObj.displayName,
+          teamObj.name,
+          teamObj.location,
+          teamObj.nickname
+        ].filter(Boolean);
+      };
+
+      return {
+        awayAbbr,
+        homeAbbr,
+        awayNames: collectNames(away?.team),
+        homeNames: collectNames(home?.team),
+        scoreInfo: {
+          awayScore: away?.score ?? '',
+          homeScore: home?.score ?? '',
+          statusDetail: ev.status?.type?.shortDetail || '',
+          state,
+          leader,
+          awayAbbr,
+          homeAbbr
+        }
+      };
+    }).filter(Boolean);
+
+    function cleanName(n) {
+      return String(n || '')
+        .toLowerCase()
+        .replace(/\bstate\b/g, 'st')
+        .replace(/[^a-z0-9]/g, '');
+    }
+
+    function matchTeam(propName, eventTeamNames) {
+      const cProp = cleanName(propName);
+      if (!cProp) return false;
+      return eventTeamNames.some(tn => {
+        const cEvent = cleanName(tn);
+        return cEvent === cProp || cEvent.includes(cProp) || cProp.includes(cEvent);
+      });
+    }
+
+    // 2. Fetch propositions and match them with the scoreboard
     const propMap = {};
     try {
       const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_ID}`, {
@@ -72,15 +111,32 @@ export async function GET() {
         const chalData = await chalRes.json();
         (chalData.propositions || []).forEach(p => {
           const outcomes = p.possibleOutcomes || p.outcomes || [];
-          let away = outcomes[0]?.abbreviation || outcomes[0]?.shortDisplayName || outcomes[0]?.name || 'Away';
-          let home = outcomes[1]?.abbreviation || outcomes[1]?.shortDisplayName || outcomes[1]?.name || 'Home';
-          
-          // Match score from scoreboard
-          const score = liveScores[away.toUpperCase()] || liveScores[home.toUpperCase()] || null;
+          const rawAway = outcomes[0]?.name || outcomes[0]?.shortDisplayName || outcomes[0]?.abbreviation || 'Away';
+          const rawHome = outcomes[1]?.name || outcomes[1]?.shortDisplayName || outcomes[1]?.abbreviation || 'Home';
 
-          // If scoreboard has shorter abbreviations, prefer those
-          if (score?.awayAbbr) away = score.awayAbbr;
-          if (score?.homeAbbr) home = score.homeAbbr;
+          // Robust 2-way match against scoreboard
+          let matchedEvent = null;
+          for (const ev of parsedEvents) {
+            const awayMatches = matchTeam(rawAway, ev.awayNames) || matchTeam(rawAway, ev.homeNames);
+            const homeMatches = matchTeam(rawHome, ev.homeNames) || matchTeam(rawHome, ev.awayNames);
+            if (awayMatches && homeMatches) {
+              matchedEvent = ev;
+              break;
+            }
+          }
+
+          if (!matchedEvent) {
+            for (const ev of parsedEvents) {
+              if (matchTeam(rawAway, ev.awayNames) || matchTeam(rawHome, ev.homeNames)) {
+                matchedEvent = ev;
+                break;
+              }
+            }
+          }
+
+          const away = matchedEvent?.awayAbbr || rawAway;
+          const home = matchedEvent?.homeAbbr || rawHome;
+          const score = matchedEvent?.scoreInfo || null;
 
           const propObj = {
             away,
@@ -138,7 +194,7 @@ export async function GET() {
 
         const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || '').toLowerCase();
         const clean = rawOutcome.replace(/[^a-z0-9]/gi, '');
-        
+
         let side = null;
         if (clean.length >= 8) {
           const char = clean.charAt(7);
