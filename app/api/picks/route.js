@@ -6,7 +6,7 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard + full week slate to catch all games
+    // 1. Fetch live scoreboard + full week slate
     let allEvents = [];
     try {
       const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300', {
@@ -16,7 +16,6 @@ export async function GET() {
         const sbData = await sbRes.json();
         allEvents = sbData.events || [];
 
-        // Also fetch the full week slate to catch earlier games
         const weekNum = sbData.week?.number;
         if (weekNum) {
           const weekRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${weekNum}`, {
@@ -35,7 +34,7 @@ export async function GET() {
       console.error("Scoreboard fetch error:", e);
     }
 
-    // Process all events and extract every possible name variation
+    // Process scoreboard events
     const parsedEvents = allEvents.map(ev => {
       const comp = ev.competitions?.[0];
       if (!comp) return null;
@@ -101,7 +100,7 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch propositions and match them with the scoreboard
+    // 2. Fetch propositions
     const propMap = {};
     try {
       const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_ID}`, {
@@ -114,7 +113,6 @@ export async function GET() {
           const rawAway = outcomes[0]?.name || outcomes[0]?.shortDisplayName || outcomes[0]?.abbreviation || 'Away';
           const rawHome = outcomes[1]?.name || outcomes[1]?.shortDisplayName || outcomes[1]?.abbreviation || 'Home';
 
-          // Robust 2-way match against scoreboard
           let matchedEvent = null;
           for (const ev of parsedEvents) {
             const awayMatches = matchTeam(rawAway, ev.awayNames) || matchTeam(rawAway, ev.homeNames);
@@ -150,7 +148,7 @@ export async function GET() {
       }
     } catch (e) {}
 
-    // 3. Fetch Group Roster
+    // 3. Fetch Group
     const groupRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`, {
       next: { revalidate: 60 }
     });
@@ -158,26 +156,40 @@ export async function GET() {
     const gData = await groupRes.json();
     const entries = gData.entries || [];
 
-    // 4. Fetch Picks
+    // 4. Fetch Picks & Capture Season Standings
     const users = [];
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
     const allPropIds = [];
+    const userOverallScores = {};
 
     const entryPromises = entries.map(async (e) => {
       const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
+      let scoreVal = null;
+      if (typeof e.score === 'number') scoreVal = e.score;
+      else if (e.score?.value !== undefined) scoreVal = e.score.value;
+      else if (typeof e.points === 'number') scoreVal = e.points;
+      else if (typeof e.overallScore === 'number') scoreVal = e.overallScore;
+
       const eRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}`, {
         next: { revalidate: 60 }
       });
-      if (!eRes.ok) return { userName, picks: [] };
+      if (!eRes.ok) return { userName, picks: [], scoreVal };
       const eData = await eRes.json();
-      return { userName, picks: eData.picks || [] };
+      if (scoreVal === null) {
+        if (typeof eData.score === 'number') scoreVal = eData.score;
+        else if (eData.score?.value !== undefined) scoreVal = eData.score.value;
+        else if (typeof eData.overallScore === 'number') scoreVal = eData.overallScore;
+        else if (typeof eData.points === 'number') scoreVal = eData.points;
+      }
+      return { userName, picks: eData.picks || [], scoreVal };
     });
 
     const settled = await Promise.all(entryPromises);
 
-    settled.forEach(({ userName, picks }) => {
+    settled.forEach(({ userName, picks, scoreVal }) => {
+      userOverallScores[userName] = scoreVal;
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
         myUser = userName;
       } else {
@@ -225,7 +237,8 @@ export async function GET() {
       otherUsers,
       weekBlocks,
       propMap,
-      pickMap
+      pickMap,
+      userOverallScores
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
