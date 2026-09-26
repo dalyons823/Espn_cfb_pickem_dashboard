@@ -6,10 +6,10 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard
+    // 1. Fetch live scoreboard for ALL FBS games (groups=80 covers all Division 1 FBS)
     const liveScores = {};
     try {
-      const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard', {
+      const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=150', {
         next: { revalidate: 30 }
       });
       if (sbRes.ok) {
@@ -31,12 +31,17 @@ export async function GET() {
             else leader = 'tie';
           }
 
+          const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
+          const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
+
           const scoreInfo = {
             awayScore: away?.score ?? '',
             homeScore: home?.score ?? '',
             statusDetail: ev.status?.type?.shortDetail || '',
             state,
-            leader
+            leader,
+            awayAbbr,
+            homeAbbr
           };
 
           const keys = [
@@ -54,10 +59,10 @@ export async function GET() {
         });
       }
     } catch (e) {
-      console.error("Scoreboard error:", e);
+      console.error("Scoreboard fetch error:", e);
     }
 
-    // 2. Fetch propositions (teams & matchups)
+    // 2. Fetch challenge propositions (matchups & teams)
     const propMap = {};
     try {
       const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_ID}`, {
@@ -67,11 +72,15 @@ export async function GET() {
         const chalData = await chalRes.json();
         (chalData.propositions || []).forEach(p => {
           const outcomes = p.possibleOutcomes || p.outcomes || [];
-          const away = outcomes[0]?.name || outcomes[0]?.abbreviation || outcomes[0]?.caption || 'Away';
-          const home = outcomes[1]?.name || outcomes[1]?.abbreviation || outcomes[1]?.caption || 'Home';
+          let away = outcomes[0]?.abbreviation || outcomes[0]?.shortDisplayName || outcomes[0]?.name || 'Away';
+          let home = outcomes[1]?.abbreviation || outcomes[1]?.shortDisplayName || outcomes[1]?.name || 'Home';
           
-          // Match score by team name or abbreviation
+          // Match score from scoreboard
           const score = liveScores[away.toUpperCase()] || liveScores[home.toUpperCase()] || null;
+
+          // If scoreboard has shorter abbreviations, prefer those
+          if (score?.awayAbbr) away = score.awayAbbr;
+          if (score?.homeAbbr) home = score.homeAbbr;
 
           const propObj = {
             away,
@@ -85,7 +94,7 @@ export async function GET() {
       }
     } catch (e) {}
 
-    // 3. Fetch Group
+    // 3. Fetch Group Roster
     const groupRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`, {
       next: { revalidate: 60 }
     });
