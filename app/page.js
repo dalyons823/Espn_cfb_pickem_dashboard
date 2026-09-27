@@ -154,12 +154,13 @@ export default function MatrixDashboard() {
     return formatAbbr(raw);
   };
 
+  // Four-Row Calculation Engine
   const userStats = useMemo(() => {
     const stats = {};
     allUsers.forEach(u => {
-      let weekWonPts = 0;
-      let weekLiveLeadingPts = 0;
-      let weekLostPts = 0;
+      let earnedPts = 0;       // Row 1: Current points earned (Final only)
+      let liveLeadingPts = 0;  // Points currently leading in live games
+      let weekLostPts = 0;     // Points lost from finalized games
 
       activeProps.forEach(prId => {
         const p = pickMap[u]?.[prId];
@@ -169,45 +170,55 @@ export default function MatrixDashboard() {
         const sc = propInfo?.score;
         const isFinal = sc?.state === 'post';
         const isLive = sc?.state === 'in';
-        const leader = sc?.leader;
+        const leader = sc?.leader; // 'away', 'home', or 'tie'
 
         if (isFinal) {
-          if (p?.side && leader && p.side === leader) {
-            weekWonPts += pts;
+          // If tie or pick incorrect, points are lost
+          if (p?.side && leader && leader !== 'tie' && p.side === leader) {
+            earnedPts += pts;
           } else {
             weekLostPts += pts;
           }
         } else if (isLive) {
-          if (p?.side && leader && p.side === leader) {
-            weekLiveLeadingPts += pts;
+          // Live game: ties go to no one
+          if (p?.side && leader && leader !== 'tie' && p.side === leader) {
+            liveLeadingPts += pts;
           }
         }
       });
 
-      const weekLiveTotal = weekWonPts + weekLiveLeadingPts;
-      const maxPotential = 55 - weekLostPts;
+      // Row 2: As It Stands (Final won + Live leading; ties go to no one)
+      const asItStands = earnedPts + liveLeadingPts;
+
+      // Row 3: Max Possible (55 max minus lost games)
+      const maxPossible = 55 - weekLostPts;
+
+      // Row 4: Total Points including current week (Yearly overall + As It Stands)
       const yearlyTotal = userYearlyScores?.[u] ?? 0;
+      const totalWithWeek = yearlyTotal + asItStands;
 
       stats[u] = {
-        weekWonPts,
-        weekLiveLeadingPts,
-        weekLiveTotal,
-        maxPotential,
-        yearlyTotal
+        earnedPts,
+        asItStands,
+        maxPossible,
+        yearlyTotal,
+        totalWithWeek,
+        liveLeadingPts
       };
     });
     return stats;
   }, [allUsers, activeProps, pickMap, propMap, userYearlyScores]);
 
+  // Sort competitors by overall standings
   const sortedUnpinnedUsers = useMemo(() => {
     return [...unpinnedUsers].sort((a, b) => {
-      const statsA = userStats[a] || { yearlyTotal: 0, weekLiveTotal: 0 };
-      const statsB = userStats[b] || { yearlyTotal: 0, weekLiveTotal: 0 };
+      const statsA = userStats[a] || { yearlyTotal: 0, asItStands: 0 };
+      const statsB = userStats[b] || { yearlyTotal: 0, asItStands: 0 };
 
       if (statsB.yearlyTotal !== statsA.yearlyTotal) {
         return statsB.yearlyTotal - statsA.yearlyTotal;
       }
-      return statsB.weekLiveTotal - statsA.weekLiveTotal;
+      return statsB.asItStands - statsA.asItStands;
     });
   }, [unpinnedUsers, userStats]);
 
@@ -243,7 +254,7 @@ export default function MatrixDashboard() {
     let opacity = '1';
 
     if (sc?.leader && pickObj?.side) {
-      const isPickWinning = (sc.leader === pickObj.side);
+      const isPickWinning = (sc.leader !== 'tie' && sc.leader === pickObj.side);
       if (isFinished) {
         if (isPickWinning) {
           border = '1px solid #22c55e';
@@ -288,17 +299,22 @@ export default function MatrixDashboard() {
       csv += row.join(',') + '\n';
     });
 
-    const totalRow = ['"Week Total"'];
-    exportUsers.forEach(u => {
-      totalRow.push(`"${userStats[u]?.weekLiveTotal || 0}"`);
-    });
-    csv += totalRow.join(',') + '\n';
+    // 4 Summary rows in CSV
+    const row1 = ['"Current Points Earned"'];
+    exportUsers.forEach(u => row1.push(`"${userStats[u]?.earnedPts || 0}"`));
+    csv += row1.join(',') + '\n';
 
-    const maxRow = ['"Max Potential"'];
-    exportUsers.forEach(u => {
-      maxRow.push(`"${userStats[u]?.maxPotential || 0}"`);
-    });
-    csv += maxRow.join(',') + '\n';
+    const row2 = ['"As It Stands (Ties=0)"'];
+    exportUsers.forEach(u => row2.push(`"${userStats[u]?.asItStands || 0}"`));
+    csv += row2.join(',') + '\n';
+
+    const row3 = ['"Max Points Possible"'];
+    exportUsers.forEach(u => row3.push(`"${userStats[u]?.maxPossible || 0}"`));
+    csv += row3.join(',') + '\n';
+
+    const row4 = ['"Total (incl. Week)"'];
+    exportUsers.forEach(u => row4.push(`"${userStats[u]?.totalWithWeek || 0}"`));
+    csv += row4.join(',') + '\n';
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -307,7 +323,7 @@ export default function MatrixDashboard() {
     link.click();
   };
 
-  const pinnedStats = userStats[pinnedUser] || { yearlyTotal: 0, weekLiveTotal: 0, maxPotential: 55, weekLiveLeadingPts: 0 };
+  const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, yearlyTotal: 0 };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -505,83 +521,4 @@ export default function MatrixDashboard() {
                       <span style={{ color: '#475569' }}>—</span>
                     ) : (
                       <div className="pill-box" style={getPillCustomStyle(pinnedPick, prId)}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{pinnedTeam}</span>
-                        {pinnedPick?.pts && (
-                          <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pinnedPick.pts}</span>
-                        )}
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Other Competitors */}
-                  {sortedUnpinnedUsers.map(u => {
-                    const pick = pickMap[u]?.[prId];
-                    const team = resolveTeamName(pick, prId);
-                    return (
-                      <td key={u} className="col-other" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1e293b', textAlign: 'center', verticalAlign: 'middle' }}>
-                        {team === '—' ? (
-                          <span style={{ color: '#475569' }}>—</span>
-                        ) : (
-                          <div className="pill-box" style={getPillCustomStyle(pick, prId)}>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{team}</span>
-                            {pick?.pts && (
-                              <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.18)' }}>{pick.pts}</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-
-            {/* Bottom Row 1: Week Total */}
-            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
-              <td className="col-match" style={{ padding: '8px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
-                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px' }}>Week Total</div>
-                <div style={{ fontSize: '9px', color: '#94a3b8' }}>Live / Won Pts</div>
-              </td>
-              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
-                <div style={{ fontWeight: 800, fontSize: '13px', color: '#38bdf8' }}>{pinnedStats.weekLiveTotal}</div>
-                {pinnedStats.weekLiveLeadingPts > 0 && (
-                  <div style={{ fontSize: '8px', color: '#22c55e' }}>+{pinnedStats.weekLiveLeadingPts} live</div>
-                )}
-              </td>
-              {sortedUnpinnedUsers.map(u => {
-                const st = userStats[u] || { weekLiveTotal: 0, weekLiveLeadingPts: 0 };
-                return (
-                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
-                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#38bdf8' }}>{st.weekLiveTotal}</div>
-                    {st.weekLiveLeadingPts > 0 && (
-                      <div style={{ fontSize: '8px', color: '#22c55e' }}>+{st.weekLiveLeadingPts} live</div>
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
-
-            {/* Bottom Row 2: Max Potential */}
-            <tr style={{ background: '#0b1120' }}>
-              <td className="col-match" style={{ padding: '8px 8px', background: '#0b1120', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
-                <div style={{ fontWeight: 800, color: '#f59e0b', fontSize: '11px' }}>Max Potential</div>
-                <div style={{ fontSize: '9px', color: '#94a3b8' }}>Max Possible Pts</div>
-              </td>
-              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
-                <div style={{ fontWeight: 800, fontSize: '13px', color: '#f59e0b' }}>{pinnedStats.maxPotential}</div>
-              </td>
-              {sortedUnpinnedUsers.map(u => {
-                const st = userStats[u] || { maxPotential: 55 };
-                return (
-                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', textAlign: 'center', verticalAlign: 'middle' }}>
-                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#fbbf24' }}>{st.maxPotential}</div>
-                  </td>
-                );
-              })}
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
+    
