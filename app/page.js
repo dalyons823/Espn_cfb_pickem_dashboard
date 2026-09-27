@@ -75,7 +75,7 @@ function calculateRanks(scoreMap) {
   entries.forEach(([user, score]) => {
     const tiedCount = entries.filter(e => e[1] === score).length;
     const firstIdx = entries.findIndex(e => e[1] === score);
-    ranks[user] = tiedCount > 1 ? `T-${firstIdx + 1}` : `#${firstIdx + 1}`;
+    ranks[user] = tiedCount > 1 ? `T-${firstIdx + 1}` : `${firstIdx + 1}`;
   });
   return ranks;
 }
@@ -174,7 +174,7 @@ export default function MatrixDashboard() {
   });
   const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
 
-  // Point Tallies & Base Calculations
+  // Base Point Calculations
   const userStats = useMemo(() => {
     const stats = {};
 
@@ -256,6 +256,19 @@ export default function MatrixDashboard() {
       weeklyRanks: calculateRanks(weekScores)
     };
   }, [allUsers, userStats, selectedWeek]);
+
+  // Standings Lists Sorted for Each Column
+  const sortedByInitial = useMemo(() => {
+    return [...allUsers].sort((a, b) => (userStats[b]?.initialPoints ?? 0) - (userStats[a]?.initialPoints ?? 0));
+  }, [allUsers, userStats]);
+
+  const sortedByLive = useMemo(() => {
+    return [...allUsers].sort((a, b) => (userStats[b]?.totalWithWeek ?? 0) - (userStats[a]?.totalWithWeek ?? 0));
+  }, [allUsers, userStats]);
+
+  const sortedByWeekly = useMemo(() => {
+    return [...allUsers].sort((a, b) => (userStats[b]?.asItStands ?? 0) - (userStats[a]?.asItStands ?? 0));
+  }, [allUsers, userStats]);
 
   const sortedUnpinnedUsers = useMemo(() => {
     return [...unpinnedUsers].sort((a, b) => {
@@ -481,7 +494,7 @@ export default function MatrixDashboard() {
         </div>
       </div>
 
-      {/* Main Grid */}
+      {/* Scrollable Viewport (Matrix + Standings Table) */}
       <div style={{ flex: 1, overflow: 'auto', background: '#0b1120' }}>
         <table className="matrix-table" style={{ fontSize: '12px', textAlign: 'left' }}>
           <thead>
@@ -598,7 +611,7 @@ export default function MatrixDashboard() {
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#38bdf8' }}>{pinnedStats.earnedPts}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
-                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937', textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: '#38bdf8' }}>{userStats[u]?.earnedPts || 0}</div>
                 </td>
               ))}
@@ -655,7 +668,7 @@ export default function MatrixDashboard() {
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
-                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937', textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
                 </td>
               ))}
@@ -668,11 +681,11 @@ export default function MatrixDashboard() {
                 <div style={{ fontSize: '8px', color: '#64748b' }}>Entering Wk</div>
               </td>
               <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
-                <div style={{ fontWeight: 800, fontSize: '12px', color: '#94a3b8' }}>{initialRanks[pinnedUser] || '—'}</div>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#94a3b8' }}>{initialRanks[pinnedUser] ? `#${initialRanks[pinnedUser]}` : '—'}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
                 <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
-                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#94a3b8' }}>{initialRanks[u] || '—'}</div>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#94a3b8' }}>{initialRanks[u] ? `#${initialRanks[u]}` : '—'}</div>
                 </td>
               ))}
             </tr>
@@ -684,11 +697,11 @@ export default function MatrixDashboard() {
                 <div style={{ fontSize: '8px', color: '#64748b' }}>Overall Now</div>
               </td>
               <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
-                <div style={{ fontWeight: 800, fontSize: '12px', color: '#38bdf8' }}>{liveRanks[pinnedUser] || '—'}</div>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#38bdf8' }}>{liveRanks[pinnedUser] ? `#${liveRanks[pinnedUser]}` : '—'}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
                 <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
-                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#38bdf8' }}>{liveRanks[u] || '—'}</div>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#38bdf8' }}>{liveRanks[u] ? `#${liveRanks[u]}` : '—'}</div>
                 </td>
               ))}
             </tr>
@@ -700,16 +713,110 @@ export default function MatrixDashboard() {
                 <div style={{ fontSize: '8px', color: '#64748b' }}>This Week</div>
               </td>
               <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
-                <div style={{ fontWeight: 800, fontSize: '12px', color: '#f472b6' }}>{weeklyRanks[pinnedUser] || '—'}</div>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#f472b6' }}>{weeklyRanks[pinnedUser] ? `#${weeklyRanks[pinnedUser]}` : '—'}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
                 <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
-                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#f472b6' }}>{weeklyRanks[u] || '—'}</div>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#f472b6' }}>{weeklyRanks[u] ? `#${weeklyRanks[u]}` : '—'}</div>
                 </td>
               ))}
             </tr>
           </tbody>
         </table>
+
+        {/* 3-Column Standings Table */}
+        <div style={{ padding: '16px 10px 48px 10px', maxWidth: '620px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc' }}>🏆 Leaderboard & Rankings</span>
+            <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>Week {currentWeekNumber}</span>
+          </div>
+
+          <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '8px', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
+              <thead>
+                <tr style={{ background: '#1e293b', borderBottom: '2px solid #374151' }}>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#94a3b8', fontWeight: 700, width: '33.33%', borderRight: '1px solid #1f2937' }}>
+                    Initial Rank
+                  </th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#38bdf8', fontWeight: 700, width: '33.33%', borderRight: '1px solid #1f2937' }}>
+                    Current Rank
+                  </th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#f472b6', fontWeight: 700, width: '33.33%' }}>
+                    Weekly Rank
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {allUsers.map((_, idx) => {
+                  const uInit = sortedByInitial[idx];
+                  const uLive = sortedByLive[idx];
+                  const uWeek = sortedByWeekly[idx];
+
+                  const initRank = uInit ? (initialRanks[uInit] || (idx + 1)) : '—';
+                  const liveRank = uLive ? (liveRanks[uLive] || (idx + 1)) : '—';
+                  const weekRank = uWeek ? (weeklyRanks[uWeek] || (idx + 1)) : '—';
+
+                  const rowBg = idx % 2 === 0 ? '#0b1120' : '#0e1626';
+
+                  return (
+                    <tr key={idx} style={{ background: rowBg, borderBottom: '1px solid #1e293b' }}>
+                      {/* Column 1: Initial Rank */}
+                      <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uInit ? (
+                          <>
+                            <span style={{ color: '#64748b', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {initRank}.
+                            </span>
+                            <span style={{ fontWeight: uInit === pinnedUser ? 800 : 600, color: uInit === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uInit === pinnedUser ? '⭐ ' : ''}{uInit}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uInit]?.initialPoints ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+
+                      {/* Column 2: Current Rank */}
+                      <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uLive ? (
+                          <>
+                            <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {liveRank}.
+                            </span>
+                            <span style={{ fontWeight: uLive === pinnedUser ? 800 : 600, color: uLive === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uLive === pinnedUser ? '⭐ ' : ''}{uLive}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uLive]?.totalWithWeek ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+
+                      {/* Column 3: Weekly Rank */}
+                      <td style={{ padding: '6px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uWeek ? (
+                          <>
+                            <span style={{ color: '#f472b6', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {weekRank}.
+                            </span>
+                            <span style={{ fontWeight: uWeek === pinnedUser ? 800 : 600, color: uWeek === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uWeek === pinnedUser ? '⭐ ' : ''}{uWeek}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uWeek]?.asItStands ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   );
