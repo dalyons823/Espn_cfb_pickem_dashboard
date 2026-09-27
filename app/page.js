@@ -99,7 +99,7 @@ export default function MatrixDashboard() {
           setPinnedUser(json.myUser || allMembers[0] || '');
         }
 
-        if (json.currentWeek !== undefined && json.currentWeek !== null) {
+        if (json.currentWeek !== undefined && json.currentWeek !== null && json.currentWeek < (json.weekBlocks?.length || 0)) {
           setSelectedWeek(json.currentWeek);
         } else if (json.weekBlocks?.length) {
           setSelectedWeek(json.weekBlocks.length - 1);
@@ -142,9 +142,10 @@ export default function MatrixDashboard() {
     }
   };
 
-  const { weekBlocks = [], weekNumbers = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {} } = data || {};
+  const { weekBlocks = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {} } = data || {};
   const activeProps = weekBlocks[selectedWeek] || [];
-  const currentWeekNumber = weekNumbers[selectedWeek] || (selectedWeek + 1);
+  const currentWeekNumber = selectedWeek + 1;
+  const isLatestWeek = selectedWeek === (weekBlocks.length - 1);
   const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
 
@@ -198,15 +199,15 @@ export default function MatrixDashboard() {
       const maxPossible = 55 - weekLostPts;
       const yearlyTotal = userYearlyScores?.[u] ?? 0;
 
-      let alreadyCredited = 0;
-      if (userPeriodScores?.[u]?.[currentWeekNumber] !== undefined) {
-        alreadyCredited = userPeriodScores[u][currentWeekNumber];
-      } else if (isWeekOver) {
-        alreadyCredited = earnedPts;
+      let totalWithWeek = yearlyTotal;
+      if (isLatestWeek) {
+        let alreadyCredited = userPeriodScores?.[u]?.[currentWeekNumber];
+        if (alreadyCredited === undefined) {
+          alreadyCredited = isWeekOver ? earnedPts : 0;
+        }
+        const pendingPoints = Math.max(0, asItStands - alreadyCredited);
+        totalWithWeek = yearlyTotal + pendingPoints;
       }
-
-      const pendingPoints = Math.max(0, asItStands - alreadyCredited);
-      const totalWithWeek = yearlyTotal + pendingPoints;
 
       stats[u] = {
         earnedPts,
@@ -218,7 +219,7 @@ export default function MatrixDashboard() {
       };
     });
     return stats;
-  }, [allUsers, activeProps, pickMap, propMap, userYearlyScores, userPeriodScores, currentWeekNumber, isWeekOver]);
+  }, [allUsers, activeProps, pickMap, propMap, userYearlyScores, userPeriodScores, currentWeekNumber, isWeekOver, isLatestWeek]);
 
   const sortedUnpinnedUsers = useMemo(() => {
     return [...unpinnedUsers].sort((a, b) => {
@@ -425,7 +426,7 @@ export default function MatrixDashboard() {
             style={{ background: '#0f172a', color: '#38bdf8', border: '1px solid #334155', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700 }}
           >
             {weekBlocks.map((_, i) => (
-              <option key={i} value={i}>Wk {weekNumbers[i] || (i + 1)}</option>
+              <option key={i} value={i}>Week {i + 1}</option>
             ))}
           </select>
           <select
@@ -509,6 +510,7 @@ export default function MatrixDashboard() {
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.homeScore ?? ''}</span>
                     </div>
 
+                    {/* Clock & Split Ratio Analytics */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
@@ -619,7 +621,7 @@ export default function MatrixDashboard() {
             <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
               <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
                 <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
-                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season + Live</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
               </td>
               <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
