@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
 
 const CHALLENGE_SLUG = "college-football-pickem-2026";
-const CHALLENGE_ID = 289;
 const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard + ALL past weeks' archives in parallel
+    // 1. Fetch live scoreboard to determine active week & events
     let allEvents = [];
-    let curWeek = 4;
+    let currentWeekNum = 4;
     try {
       const baseSbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300', {
         next: { revalidate: 30 }
@@ -16,14 +15,16 @@ export async function GET() {
       if (baseSbRes.ok) {
         const baseSbData = await baseSbRes.json();
         allEvents = baseSbData.events || [];
-        curWeek = baseSbData.week?.number || 4;
+        if (baseSbData.week?.number) {
+          currentWeekNum = baseSbData.week.number;
+        }
 
-        // Fetch scoreboards for week 1 through curWeek
+        // Fetch scoreboards for weeks 1 through currentWeekNum in parallel
         const weekFetches = [];
-        for (let w = 1; w <= curWeek; w++) {
+        for (let w = 1; w <= currentWeekNum; w++) {
           weekFetches.push(
             fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${w}`, {
-              next: { revalidate: w === curWeek ? 30 : 86400 }
+              next: { revalidate: w === currentWeekNum ? 30 : 86400 }
             })
             .then(res => res.ok ? res.json() : null)
             .catch(() => null)
@@ -45,7 +46,7 @@ export async function GET() {
       console.error("Scoreboard fetch error:", e);
     }
 
-    // Process all events across all weeks
+    // Process scoreboard events
     const parsedEvents = allEvents.map(ev => {
       const comp = ev.competitions?.[0];
       if (!comp) return null;
@@ -111,26 +112,26 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch challenge propositions & outcome IDs
-    let officialProps = [];
-    try {
-      const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_ID}`, {
-        next: { revalidate: 300 }
-      });
-      if (chalRes.ok) {
-        const chalData = await chalRes.json();
-        officialProps = chalData.propositions || [];
-      }
-    } catch (e) {}
-
+    // 2. Fetch challenge propositions strictly for weeks 1 through currentWeekNum
     const propMap = {};
-    officialProps.forEach(p => {
-      const outcomes = p.possibleOutcomes || p.outcomes || [];
-      const rawAway = outcomes[0]?.name || outcomes[0]?.shortDisplayName || outcomes[0]?.abbreviation || 'Away';
-      const rawHome = outcomes[1]?.name || outcomes[1]?.shortDisplayName || outcomes[1]?.abbreviation || 'Home';
-      const outcomeAwayId = outcomes[0]?.id;
-      const outcomeHomeId = outcomes[1]?.id;
+    const weekPropMap = {}; // { [weekNum]: [propIds] }
 
+    function registerProp(p, weekNum) {
+      if (!p || !p.id) return;
+      const outcomes = p.possibleOutcomes || p.outcomes || [];
+      const rawAway = outcomes[0]?.abbreviation || outcomes[0]?.shortDisplayName || outcomes[0]?.name || 'Away';
+      const rawHome = outcomes[1]?.abbreviation || outcomes[1]?.shortDisplayName || outcomes[1]?.name || 'Home';
+      const outcomeAwayId = outcomes[0]?.id ? String(outcomes[0].id) : null;
+      const outcomeHomeId = outcomes[1]?.id ? String(outcomes[1].id) : null;
+
+      let winner = null;
+      if (outcomes[0]?.winner || (p.correctOutcomeId && String(p.correctOutcomeId) === outcomeAwayId)) {
+        winner = 'away';
+      } else if (outcomes[1]?.winner || (p.correctOutcomeId && String(p.correctOutcomeId) === outcomeHomeId)) {
+        winner = 'home';
+      }
+
+      // Match against scoreboard
       let matchedEvent = null;
       for (const ev of parsedEvents) {
         const awayMatches = matchTeam(rawAway, ev.awayNames) || matchTeam(rawAway, ev.homeNames);
@@ -142,14 +143,16 @@ export async function GET() {
       }
 
       let score = matchedEvent?.scoreInfo || null;
-      if (!score && outcomes.length === 2) {
-        const awayOutcome = outcomes[0];
-        const homeOutcome = outcomes[1];
-        if (awayOutcome?.winner || p.correctOutcomeId === awayOutcome?.id) {
-          score = { awayScore: '', homeScore: '', statusDetail: 'Final', state: 'post', leader: 'away', awayAbbr: rawAway, homeAbbr: rawHome };
-        } else if (homeOutcome?.winner || p.correctOutcomeId === homeOutcome?.id) {
-          score = { awayScore: '', homeScore: '', statusDetail: 'Final', state: 'post', leader: 'home', awayAbbr: rawAway, homeAbbr: rawHome };
-        }
+      if (!score && winner) {
+        score = {
+          awayScore: '',
+          homeScore: '',
+          statusDetail: 'Final',
+          state: 'post',
+          leader: winner,
+          awayAbbr: rawAway,
+          homeAbbr: rawHome
+        };
       }
 
       const away = matchedEvent?.awayAbbr || rawAway;
@@ -162,13 +165,51 @@ export async function GET() {
         title: `${away} @ ${home}`,
         score,
         outcomeAwayId,
-        outcomeHomeId
+        outcomeHomeId,
+        scoringPeriodId: weekNum || p.scoringPeriodId || p.scoringPeriod || null
       };
+
       propMap[p.id] = propObj;
       if (typeof p.id === 'string' && p.id.length >= 7) {
         propMap[p.id.slice(0, 7)] = propObj;
       }
+
+      if (weekNum) {
+        if (!weekPropMap[weekNum]) weekPropMap[weekNum] = [];
+        if (!weekPropMap[weekNum].includes(p.id)) {
+          weekPropMap[weekNum].push(p.id);
+        }
+      }
+    }
+
+    const propFetches = [];
+    for (let w = 1; w <= currentWeekNum; w++) {
+      propFetches.push(
+        fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?scoringPeriodId=${w}&view=chui_pagetype_group_picks`, {
+          next: { revalidate: w === currentWeekNum ? 60 : 86400 }
+        })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => ({ data, week: w }))
+        .catch(() => ({ data: null, week: w }))
+      );
+    }
+    const propResults = await Promise.all(propFetches);
+    propResults.forEach(({ data, week }) => {
+      if (data?.propositions) {
+        data.propositions.forEach(p => registerProp(p, week));
+      }
     });
+
+    // Also fetch general challenge to ensure current week is fully covered
+    try {
+      const generalChalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_group_picks`, {
+        next: { revalidate: 60 }
+      });
+      if (generalChalRes.ok) {
+        const generalData = await generalChalRes.json();
+        (generalData.propositions || []).forEach(p => registerProp(p, currentWeekNum));
+      }
+    } catch (e) {}
 
     // 3. Fetch Group Leaderboard
     const groupRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`, {
@@ -178,12 +219,12 @@ export async function GET() {
     const gData = await groupRes.json();
     const entries = gData.entries || [];
 
-    // 4. Fetch Picks & Extract Overall & Period Scores
+    // 4. Fetch Each Entry's Picks
     const users = [];
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
-    const allPropIds = [];
+    const allPickPropIds = [];
     const userYearlyScores = {};
     const userPeriodScores = {};
 
@@ -249,23 +290,30 @@ export async function GET() {
 
       picks.forEach(p => {
         const propId = p.propositionId;
-        if (propId && !allPropIds.includes(propId)) {
-          allPropIds.push(propId);
+        if (propId && !allPickPropIds.includes(propId)) {
+          allPickPropIds.push(propId);
         }
 
         const propInfo = propMap[propId] || propMap[propId?.slice?.(0, 7)];
-        const pickedOutcomeId = p.outcomesPicked?.[0]?.outcomeId || p.outcomeId;
+        const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || p.outcome?.id || '');
+        const clean = rawOutcome.toLowerCase().replace(/[^a-z0-9]/gi, '');
 
         let side = null;
-        if (propInfo?.outcomeAwayId && pickedOutcomeId === propInfo.outcomeAwayId) {
+        if (propInfo?.outcomeAwayId && (String(propInfo.outcomeAwayId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeAwayId)))) {
           side = 'away';
-        } else if (propInfo?.outcomeHomeId && pickedOutcomeId === propInfo.outcomeHomeId) {
+        } else if (propInfo?.outcomeHomeId && (String(propInfo.outcomeHomeId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeHomeId)))) {
           side = 'home';
-        } else {
-          const clean = String(pickedOutcomeId || '').toLowerCase().replace(/[^a-z0-9]/gi, '');
-          if (clean.length >= 8 && clean.charAt(7) === '1') side = 'away';
-          else if (clean.length >= 8 && clean.charAt(7) === '2') side = 'home';
-          else if (clean.endsWith('1')) side = 'away';
+        }
+
+        if (!side) {
+          if (clean.length >= 8) {
+            const char = clean.charAt(7);
+            if (char === '1') side = 'away';
+            if (char === '2') side = 'home';
+          }
+        }
+        if (!side) {
+          if (clean.endsWith('1')) side = 'away';
           else if (clean.endsWith('2')) side = 'home';
         }
 
@@ -278,24 +326,23 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    // Append any upcoming propositions for the current week that haven't kicked off yet
-    officialProps.forEach(p => {
-      if (p.id && !allPropIds.includes(p.id)) {
-        allPropIds.push(p.id);
-      }
-    });
-
-    // 5. Partition cleanly into 10-game weekly blocks
+    // 5. Build weekly blocks strictly capped at currentWeekNum (Never show Week 5 before it exists)
     const weekBlocks = [];
-    for (let i = 0; i < allPropIds.length; i += 10) {
-      weekBlocks.push(allPropIds.slice(i, i + 10));
+    for (let w = 1; w <= currentWeekNum; w++) {
+      if (weekPropMap[w] && weekPropMap[w].length > 0) {
+        weekBlocks.push(weekPropMap[w]);
+      } else {
+        const start = (w - 1) * 10;
+        const slice = allPickPropIds.slice(start, start + 10);
+        if (slice.length > 0) {
+          weekBlocks.push(slice);
+        }
+      }
     }
 
     if (!weekBlocks.length) {
-      weekBlocks.push([]);
+      weekBlocks.push(allPickPropIds.slice(0, 10));
     }
-
-    const currentWeekIdx = weekBlocks.length > 0 ? weekBlocks.length - 1 : 0;
 
     return NextResponse.json({
       myUser,
@@ -305,7 +352,7 @@ export async function GET() {
       pickMap,
       userYearlyScores,
       userPeriodScores,
-      currentWeek: currentWeekIdx
+      currentWeek: weekBlocks.length - 1
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
