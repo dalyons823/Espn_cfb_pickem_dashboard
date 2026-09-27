@@ -1,12 +1,3 @@
-Here is the updated app/page.js.
-It replaces the bottom summary with the four requested rows:
- * Points Earned: Locked points from finalized (Final) games won so far.
- * As It Stands: Current live total (Points Earned + points from games currently leading). In the event of a tie, neither side receives points.
- * Max Possible: Maximum potential points remaining for the week (55 minus points lost from completed games).
- * Total (incl. Week): Season/yearly standings plus the current week's "As It Stands" total.
-Both the on-screen table and the CSV Export now include all four rows.
-app/page.js
-Tap into app/page.js on GitHub, tap the pencil icon, replace all code, and commit:
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -74,7 +65,7 @@ const ABBR_FALLBACKS = {
 
 function formatAbbr(name) {
   if (!name) return '—';
-  const clean = name.trim().toLowerCase();
+  const clean = String(name).trim().toLowerCase();
   return ABBR_FALLBACKS[clean] || name;
 }
 
@@ -157,52 +148,46 @@ export default function MatrixDashboard() {
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
 
   const resolveTeamName = (pickObj, prId) => {
-    const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home' };
+    const sId = String(prId || '');
+    const propInfo = propMap[prId] || propMap[sId.slice(0, 7)] || { away: 'Away', home: 'Home' };
     if (!pickObj || !pickObj.side) return '—';
     const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
     return formatAbbr(raw);
   };
 
-  // Four-Row Calculation Engine
   const userStats = useMemo(() => {
     const stats = {};
     allUsers.forEach(u => {
-      let earnedPts = 0;       // Row 1: Current points earned (Final only)
-      let liveLeadingPts = 0;  // Points currently leading in live games
-      let weekLostPts = 0;     // Points lost from finalized games
+      let earnedPts = 0;
+      let liveLeadingPts = 0;
+      let weekLostPts = 0;
 
       activeProps.forEach(prId => {
         const p = pickMap[u]?.[prId];
         const pts = p?.pts || 0;
 
-        const propInfo = propMap[prId] || propMap[prId.slice(0, 7)];
+        const sId = String(prId || '');
+        const propInfo = propMap[prId] || propMap[sId.slice(0, 7)];
         const sc = propInfo?.score;
         const isFinal = sc?.state === 'post';
         const isLive = sc?.state === 'in';
-        const leader = sc?.leader; // 'away', 'home', or 'tie'
+        const leader = sc?.leader;
 
         if (isFinal) {
-          // If tie or pick incorrect, points are lost
           if (p?.side && leader && leader !== 'tie' && p.side === leader) {
             earnedPts += pts;
           } else {
             weekLostPts += pts;
           }
         } else if (isLive) {
-          // Live game: ties go to no one
           if (p?.side && leader && leader !== 'tie' && p.side === leader) {
             liveLeadingPts += pts;
           }
         }
       });
 
-      // Row 2: As It Stands (Final won + Live leading; ties go to no one)
       const asItStands = earnedPts + liveLeadingPts;
-
-      // Row 3: Max Possible (55 max minus lost games)
       const maxPossible = 55 - weekLostPts;
-
-      // Row 4: Total Points including current week (Yearly overall + As It Stands)
       const yearlyTotal = userYearlyScores?.[u] ?? 0;
       const totalWithWeek = yearlyTotal + asItStands;
 
@@ -218,7 +203,6 @@ export default function MatrixDashboard() {
     return stats;
   }, [allUsers, activeProps, pickMap, propMap, userYearlyScores]);
 
-  // Sort competitors by overall standings
   const sortedUnpinnedUsers = useMemo(() => {
     return [...unpinnedUsers].sort((a, b) => {
       const statsA = userStats[a] || { yearlyTotal: 0, asItStands: 0 };
@@ -254,7 +238,8 @@ export default function MatrixDashboard() {
       return { background: '#1e293b', color: '#64748b', border: '1px solid #334155' };
     }
 
-    const propInfo = propMap[prId] || propMap[prId.slice(0, 7)];
+    const sId = String(prId || '');
+    const propInfo = propMap[prId] || propMap[sId.slice(0, 7)];
     const sc = propInfo?.score;
     const isFinished = sc?.state === 'post';
     const isLive = sc?.state === 'in';
@@ -296,7 +281,8 @@ export default function MatrixDashboard() {
     let csv = 'Matchup,' + exportUsers.map(u => `"${u.replace(/"/g, '""')} (${userStats[u]?.yearlyTotal || 0} pts)"`).join(',') + '\n';
 
     activeProps.forEach((prId, gIdx) => {
-      const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { title: `Game #${gIdx + 1}` };
+      const sId = String(prId || '');
+      const propInfo = propMap[prId] || propMap[sId.slice(0, 7)] || { title: `Game #${gIdx + 1}` };
       const row = [`"${propInfo.title.replace(/"/g, '""')}"`];
 
       exportUsers.forEach(u => {
@@ -308,7 +294,6 @@ export default function MatrixDashboard() {
       csv += row.join(',') + '\n';
     });
 
-    // 4 Summary rows in CSV
     const row1 = ['"Current Points Earned"'];
     exportUsers.forEach(u => row1.push(`"${userStats[u]?.earnedPts || 0}"`));
     csv += row1.join(',') + '\n';
@@ -475,7 +460,8 @@ export default function MatrixDashboard() {
           </thead>
           <tbody>
             {activeProps.map((prId, gIdx) => {
-              const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
+              const sId = String(prId || '');
+              const propInfo = propMap[prId] || propMap[sId.slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
               const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
 
               const counts = { away: 0, home: 0 };
@@ -497,21 +483,17 @@ export default function MatrixDashboard() {
 
               return (
                 <tr key={prId} style={{ background: rowBg }}>
-                  {/* Column 1: Stacked Scoreboard */}
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.awayScore ?? ''}</span>
                     </div>
 
-                    {/* Home Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.homeScore ?? ''}</span>
                     </div>
 
-                    {/* Clock & Split Ratio */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
@@ -524,7 +506,6 @@ export default function MatrixDashboard() {
                     </div>
                   </td>
 
-                  {/* Column 2: Pinned User */}
                   <td className="col-pinned" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: rowBg, textAlign: 'center' }}>
                     {pinnedTeam === '—' ? (
                       <span style={{ color: '#475569' }}>—</span>
@@ -538,7 +519,6 @@ export default function MatrixDashboard() {
                     )}
                   </td>
 
-                  {/* Other Competitors */}
                   {sortedUnpinnedUsers.map(u => {
                     const pick = pickMap[u]?.[prId];
                     const team = resolveTeamName(pick, prId);
@@ -577,7 +557,7 @@ export default function MatrixDashboard() {
               ))}
             </tr>
 
-            {/* Bottom Row 2: Current Points "As It Stands" (Ties go to no one) */}
+            {/* Bottom Row 2: Current Points "As It Stands" */}
             <tr style={{ background: '#0f172a' }}>
               <td className="col-match" style={{ padding: '6px 8px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
                 <div style={{ fontWeight: 800, color: '#a78bfa', fontSize: '11px', lineHeight: 1.1 }}>As It Stands</div>
@@ -639,4 +619,3 @@ export default function MatrixDashboard() {
     </div>
   );
 }
-
