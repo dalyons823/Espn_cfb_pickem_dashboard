@@ -1,3 +1,12 @@
+Here is the updated app/page.js.
+It replaces the bottom summary with the four requested rows:
+ * Points Earned: Locked points from finalized (Final) games won so far.
+ * As It Stands: Current live total (Points Earned + points from games currently leading). In the event of a tie, neither side receives points.
+ * Max Possible: Maximum potential points remaining for the week (55 minus points lost from completed games).
+ * Total (incl. Week): Season/yearly standings plus the current week's "As It Stands" total.
+Both the on-screen table and the CSV Export now include all four rows.
+app/page.js
+Tap into app/page.js on GitHub, tap the pencil icon, replace all code, and commit:
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -521,4 +530,113 @@ export default function MatrixDashboard() {
                       <span style={{ color: '#475569' }}>—</span>
                     ) : (
                       <div className="pill-box" style={getPillCustomStyle(pinnedPick, prId)}>
-    
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{pinnedTeam}</span>
+                        {pinnedPick?.pts && (
+                          <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pinnedPick.pts}</span>
+                        )}
+                      </div>
+                    )}
+                  </td>
+
+                  {/* Other Competitors */}
+                  {sortedUnpinnedUsers.map(u => {
+                    const pick = pickMap[u]?.[prId];
+                    const team = resolveTeamName(pick, prId);
+                    return (
+                      <td key={u} className="col-other" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1e293b', textAlign: 'center', verticalAlign: 'middle' }}>
+                        {team === '—' ? (
+                          <span style={{ color: '#475569' }}>—</span>
+                        ) : (
+                          <div className="pill-box" style={getPillCustomStyle(pick, prId)}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{team}</span>
+                            {pick?.pts && (
+                              <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.18)' }}>{pick.pts}</span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+
+            {/* Bottom Row 1: Current Points Earned */}
+            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px', lineHeight: 1.1 }}>Points Earned</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Finalized Won</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#38bdf8' }}>{pinnedStats.earnedPts}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#38bdf8' }}>{userStats[u]?.earnedPts || 0}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 2: Current Points "As It Stands" (Ties go to no one) */}
+            <tr style={{ background: '#0f172a' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#a78bfa', fontSize: '11px', lineHeight: 1.1 }}>As It Stands</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Ties = 0 pts</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#a78bfa' }}>{pinnedStats.asItStands}</div>
+                {pinnedStats.liveLeadingPts > 0 && (
+                  <div style={{ fontSize: '8px', color: '#22c55e' }}>+{pinnedStats.liveLeadingPts} live</div>
+                )}
+              </td>
+              {sortedUnpinnedUsers.map(u => {
+                const st = userStats[u] || { asItStands: 0, liveLeadingPts: 0 };
+                return (
+                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#a78bfa' }}>{st.asItStands}</div>
+                    {st.liveLeadingPts > 0 && (
+                      <div style={{ fontSize: '8px', color: '#22c55e' }}>+{st.liveLeadingPts} live</div>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Bottom Row 3: Max Points Possible */}
+            <tr style={{ background: '#0b1120' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#f59e0b', fontSize: '11px', lineHeight: 1.1 }}>Max Possible</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Max Potential</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#f59e0b' }}>{pinnedStats.maxPossible}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#fbbf24' }}>{userStats[u]?.maxPossible || 0}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 4: Total Points Including Current Week */}
+            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season + Live</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
