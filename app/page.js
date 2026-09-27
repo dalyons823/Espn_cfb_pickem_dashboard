@@ -102,7 +102,7 @@ export default function MatrixDashboard() {
         if (json.currentWeek !== undefined && json.currentWeek !== null) {
           setSelectedWeek(json.currentWeek);
         } else if (json.weekBlocks?.length) {
-          setSelectedWeek(0);
+          setSelectedWeek(json.weekBlocks.length - 1);
         }
       }
     } catch (err) {
@@ -154,7 +154,6 @@ export default function MatrixDashboard() {
     return formatAbbr(raw);
   };
 
-  // Calculate live statistics
   const userStats = useMemo(() => {
     const stats = {};
     allUsers.forEach(u => {
@@ -200,7 +199,6 @@ export default function MatrixDashboard() {
     return stats;
   }, [allUsers, activeProps, pickMap, propMap, userYearlyScores]);
 
-  // Sort competitors by overall yearly standings
   const sortedUnpinnedUsers = useMemo(() => {
     return [...unpinnedUsers].sort((a, b) => {
       const statsA = userStats[a] || { yearlyTotal: 0, weekLiveTotal: 0 };
@@ -217,7 +215,7 @@ export default function MatrixDashboard() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#0b1120' }}>
         <div style={{ fontSize: '30px', marginBottom: '10px' }}>🏈</div>
-        <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 600 }}>Syncing schedule & picks...</div>
+        <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 600 }}>Syncing scores & standings...</div>
       </div>
     );
   }
@@ -474,21 +472,24 @@ export default function MatrixDashboard() {
 
               return (
                 <tr key={prId} style={{ background: rowBg }}>
-                  {/* Column 1: Matchup / Live Score / Kickoff Time */}
+                  {/* Column 1: Stacked Scoreboard */}
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
+                    {/* Away Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.awayScore ?? ''}</span>
                     </div>
 
+                    {/* Home Team */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.homeScore ?? ''}</span>
                     </div>
 
+                    {/* Clock & Split Ratio */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
-                        {isLive && '🔴 '}{sc?.statusDetail || propInfo.gameTime || 'Upcoming'}
+                        {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
                       </span>
                       {(counts.away > 0 || counts.home > 0) ? (
                         <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span>
