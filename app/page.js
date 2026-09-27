@@ -196,8 +196,7 @@ export default function MatrixDashboard() {
         asItStands,
         maxPossible,
         yearlyTotal,
-        totalWithWeek,
-        liveLeadingPts
+        totalWithWeek
       };
     });
     return stats;
@@ -565,21 +564,12 @@ export default function MatrixDashboard() {
               </td>
               <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#a78bfa' }}>{pinnedStats.asItStands}</div>
-                {pinnedStats.liveLeadingPts > 0 && (
-                  <div style={{ fontSize: '8px', color: '#22c55e' }}>+{pinnedStats.liveLeadingPts} live</div>
-                )}
               </td>
-              {sortedUnpinnedUsers.map(u => {
-                const st = userStats[u] || { asItStands: 0, liveLeadingPts: 0 };
-                return (
-                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
-                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#a78bfa' }}>{st.asItStands}</div>
-                    {st.liveLeadingPts > 0 && (
-                      <div style={{ fontSize: '8px', color: '#22c55e' }}>+{st.liveLeadingPts} live</div>
-                    )}
-                  </td>
-                );
-              })}
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#a78bfa' }}>{userStats[u]?.asItStands || 0}</div>
+                </td>
+              ))}
             </tr>
 
             {/* Bottom Row 3: Max Points Possible */}
