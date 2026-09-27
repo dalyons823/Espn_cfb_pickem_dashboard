@@ -6,36 +6,42 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard for FBS games
+    // 1. Fetch live scoreboard + ALL past weeks' archives in parallel
     let allEvents = [];
-    let scoreboardWeek = null;
+    let currentWeekNum = 4;
     try {
-      const sbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300', {
+      const baseSbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300', {
         next: { revalidate: 30 }
       });
-      if (sbRes.ok) {
-        const sbData = await sbRes.json();
-        allEvents = sbData.events || [];
-        scoreboardWeek = sbData.week?.number;
+      if (baseSbRes.ok) {
+        const baseSbData = await baseSbRes.json();
+        allEvents = baseSbData.events || [];
+        currentWeekNum = baseSbData.week?.number || 4;
 
-        if (scoreboardWeek) {
-          const weekRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${scoreboardWeek}`, {
-            next: { revalidate: 30 }
-          });
-          if (weekRes.ok) {
-            const weekData = await weekRes.json();
-            const existingIds = new Set(allEvents.map(e => e.id));
-            (weekData.events || []).forEach(ev => {
-              if (!existingIds.has(ev.id)) allEvents.push(ev);
-            });
-          }
+        // Fetch weeks 1 through (currentWeekNum - 1) in parallel
+        const pastWeekFetches = [];
+        for (let w = 1; w < currentWeekNum; w++) {
+          pastWeekFetches.push(
+            fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${w}`, {
+              next: { revalidate: 86400 } // Past weeks never change; cache for 24h
+            })
+            .then(res => res.ok ? res.json() : null)
+            .catch(() => null)
+          );
         }
+
+        const pastResults = await Promise.all(pastWeekFetches);
+        pastResults.forEach(data => {
+          if (data?.events) {
+            allEvents = allEvents.concat(data.events);
+          }
+        });
       }
     } catch (e) {
       console.error("Scoreboard fetch error:", e);
     }
 
-    // Process scoreboard events
+    // Process all events across all weeks
     const parsedEvents = allEvents.map(ev => {
       const comp = ev.competitions?.[0];
       if (!comp) return null;
@@ -55,6 +61,7 @@ export async function GET() {
 
       const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
       const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
+      const eventWeek = ev.week?.number || comp.week || null;
 
       const collectNames = (teamObj) => {
         if (!teamObj) return [];
@@ -69,6 +76,7 @@ export async function GET() {
       };
 
       return {
+        eventWeek,
         awayAbbr,
         homeAbbr,
         awayNames: collectNames(away?.team),
@@ -101,7 +109,7 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch official challenge propositions ONLY (from official challenge endpoint)
+    // 2. Fetch challenge propositions
     let officialProps = [];
     try {
       const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_group_picks`, {
@@ -130,29 +138,36 @@ export async function GET() {
       const outcomes = p.possibleOutcomes || p.outcomes || [];
       const rawAway = outcomes[0]?.name || outcomes[0]?.shortDisplayName || outcomes[0]?.abbreviation || 'Away';
       const rawHome = outcomes[1]?.name || outcomes[1]?.shortDisplayName || outcomes[1]?.abbreviation || 'Home';
+      const propWeek = p.scoringPeriodId || p.scoringPeriod || null;
 
+      // Match against scoreboard with week awareness to prevent cross-week collisions
       let matchedEvent = null;
       for (const ev of parsedEvents) {
         const awayMatches = matchTeam(rawAway, ev.awayNames) || matchTeam(rawAway, ev.homeNames);
         const homeMatches = matchTeam(rawHome, ev.homeNames) || matchTeam(rawHome, ev.awayNames);
         if (awayMatches && homeMatches) {
-          matchedEvent = ev;
-          break;
-        }
-      }
-
-      if (!matchedEvent) {
-        for (const ev of parsedEvents) {
-          if (matchTeam(rawAway, ev.awayNames) || matchTeam(rawHome, ev.homeNames)) {
+          if (!propWeek || ev.eventWeek === propWeek) {
             matchedEvent = ev;
             break;
           }
+          if (!matchedEvent) matchedEvent = ev;
+        }
+      }
+
+      // Fallback to ESPN Gambit outcome winner if older game is archived
+      let score = matchedEvent?.scoreInfo || null;
+      if (!score && outcomes.length === 2) {
+        const awayOutcome = outcomes[0];
+        const homeOutcome = outcomes[1];
+        if (awayOutcome?.winner || p.correctOutcomeId === awayOutcome?.id) {
+          score = { awayScore: '', homeScore: '', statusDetail: 'Final', state: 'post', leader: 'away', awayAbbr: rawAway, homeAbbr: rawHome };
+        } else if (homeOutcome?.winner || p.correctOutcomeId === homeOutcome?.id) {
+          score = { awayScore: '', homeScore: '', statusDetail: 'Final', state: 'post', leader: 'home', awayAbbr: rawAway, homeAbbr: rawHome };
         }
       }
 
       const away = matchedEvent?.awayAbbr || rawAway;
       const home = matchedEvent?.homeAbbr || rawHome;
-      const score = matchedEvent?.scoreInfo || null;
 
       const propObj = {
         id: p.id,
@@ -160,7 +175,7 @@ export async function GET() {
         home,
         title: `${away} @ ${home}`,
         score,
-        scoringPeriodId: p.scoringPeriodId || p.scoringPeriod || null
+        scoringPeriodId: propWeek
       };
       propMap[p.id] = propObj;
       if (typeof p.id === 'string' && p.id.length >= 7) {
@@ -168,7 +183,7 @@ export async function GET() {
       }
     });
 
-    // 3. Fetch Group Leaderboard & Season Scores
+    // 3. Fetch Group Leaderboard
     const groupRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`, {
       next: { revalidate: 60 }
     });
@@ -176,13 +191,14 @@ export async function GET() {
     const gData = await groupRes.json();
     const entries = gData.entries || [];
 
-    // 4. Fetch Picks (Source of truth for Pick'em games)
+    // 4. Fetch Picks & Extract Overall & Period Scores
     const users = [];
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
-    const allPropIds = [];
     const userYearlyScores = {};
+    const userPeriodScores = {};
+    const weekMap = {}; // { [weekNum]: Set of propIds }
 
     function extractScore(obj) {
       if (!obj) return null;
@@ -202,20 +218,40 @@ export async function GET() {
       const eRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}`, {
         next: { revalidate: 60 }
       });
-      if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0 };
+      if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
-      
+
       if (scoreVal === null) {
         scoreVal = extractScore(eData.score) ?? extractScore(eData.points) ?? extractScore(eData.overallScore) ?? extractScore(eData) ?? 0;
       }
 
-      return { userName, picks: eData.picks || [], scoreVal: scoreVal || 0 };
+      const periodScores = {};
+      const sources = [eData.scores, eData.scoresByScoringPeriod, e.scores, e.scoresByScoringPeriod];
+      for (const src of sources) {
+        if (!src) continue;
+        if (Array.isArray(src)) {
+          src.forEach(item => {
+            const pId = item?.scoringPeriodId ?? item?.periodId ?? item?.period;
+            const val = extractScore(item);
+            if (pId !== undefined && val !== null) periodScores[Number(pId)] = val;
+          });
+        } else if (typeof src === 'object') {
+          Object.entries(src).forEach(([k, item]) => {
+            const val = extractScore(item);
+            if (val !== null) periodScores[Number(k)] = val;
+          });
+        }
+      }
+
+      return { userName, picks: eData.picks || [], scoreVal: scoreVal || 0, periodScores };
     });
 
     const settled = await Promise.all(entryPromises);
 
-    settled.forEach(({ userName, picks, scoreVal }) => {
+    settled.forEach(({ userName, picks, scoreVal, periodScores }) => {
       userYearlyScores[userName] = scoreVal;
+      userPeriodScores[userName] = periodScores || {};
+
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
         myUser = userName;
       } else {
@@ -226,8 +262,15 @@ export async function GET() {
 
       picks.forEach(p => {
         const propId = p.propositionId;
-        if (!allPropIds.includes(propId)) {
-          allPropIds.push(propId);
+        const sp = p.scoringPeriodId || propMap[propId]?.scoringPeriodId || null;
+
+        // Group games strictly by their verified scoring period
+        if (sp) {
+          const spNum = Number(sp);
+          if (!weekMap[spNum]) weekMap[spNum] = [];
+          if (!weekMap[spNum].includes(propId)) {
+            weekMap[spNum].push(propId);
+          }
         }
 
         const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || '').toLowerCase();
@@ -253,38 +296,30 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    // 5. Partition verified pick'em propositions into 10-game weekly blocks
-    const weekBlocks = [];
-    for (let i = 0; i < allPropIds.length; i += 10) {
-      weekBlocks.push(allPropIds.slice(i, i + 10));
+    // 5. Partition weeks chronologically
+    const sortedWeeks = Object.keys(weekMap).map(Number).sort((a, b) => a - b);
+    let weekBlocks = sortedWeeks.map(w => weekMap[w]);
+    let weekNumbers = sortedWeeks;
+
+    // Fallback if weekMap was empty
+    if (!weekBlocks.length) {
+      weekBlocks = [[]];
+      weekNumbers = [1];
     }
 
-    // If current week has fewer than 10 games (e.g. night games haven't started),
-    // check if official challenge propositions has the remaining verified games for this week
-    const currentWeekIdx = weekBlocks.length > 0 ? weekBlocks.length - 1 : 0;
-    const currentWeekNum = currentWeekIdx + 1;
-
-    if (weekBlocks[currentWeekIdx] && weekBlocks[currentWeekIdx].length < 10) {
-      const currentBlock = weekBlocks[currentWeekIdx];
-      officialProps.forEach(p => {
-        const sp = p.scoringPeriodId || p.scoringPeriod;
-        const outcomes = p.possibleOutcomes || p.outcomes || [];
-        // Only include if it belongs to this week's scoring period and has 2 teams
-        if (sp === currentWeekNum && outcomes.length === 2) {
-          if (!currentBlock.includes(p.id) && currentBlock.length < 10) {
-            currentBlock.push(p.id);
-          }
-        }
-      });
-    }
+    // Default to the current active week
+    let currentWeekIdx = weekNumbers.indexOf(currentWeekNum);
+    if (currentWeekIdx === -1) currentWeekIdx = weekBlocks.length - 1;
 
     return NextResponse.json({
       myUser,
       otherUsers,
       weekBlocks,
+      weekNumbers,
       propMap,
       pickMap,
       userYearlyScores,
+      userPeriodScores,
       currentWeek: currentWeekIdx
     });
   } catch (err) {
