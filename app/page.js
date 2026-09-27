@@ -69,6 +69,17 @@ function formatAbbr(name) {
   return ABBR_FALLBACKS[clean] || name;
 }
 
+function calculateRanks(scoreMap) {
+  const entries = Object.entries(scoreMap).sort((a, b) => b[1] - a[1]);
+  const ranks = {};
+  entries.forEach(([user, score]) => {
+    const tiedCount = entries.filter(e => e[1] === score).length;
+    const firstIdx = entries.findIndex(e => e[1] === score);
+    ranks[user] = tiedCount > 1 ? `T-${firstIdx + 1}` : `#${firstIdx + 1}`;
+  });
+  return ranks;
+}
+
 export default function MatrixDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -163,7 +174,7 @@ export default function MatrixDashboard() {
   });
   const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
 
-  // Four-Row Calculation Engine
+  // Point Tallies & Base Calculations
   const userStats = useMemo(() => {
     const stats = {};
 
@@ -199,12 +210,17 @@ export default function MatrixDashboard() {
       const maxPossible = 55 - weekLostPts;
       const yearlyTotal = userYearlyScores?.[u] ?? 0;
 
+      let alreadyCredited = 0;
+      if (userPeriodScores?.[u]?.[currentWeekNumber] !== undefined) {
+        alreadyCredited = userPeriodScores[u][currentWeekNumber];
+      } else if (isWeekOver) {
+        alreadyCredited = earnedPts;
+      }
+
+      const initialPoints = Math.max(0, yearlyTotal - alreadyCredited);
+
       let totalWithWeek = yearlyTotal;
       if (isLatestWeek) {
-        let alreadyCredited = userPeriodScores?.[u]?.[currentWeekNumber];
-        if (alreadyCredited === undefined) {
-          alreadyCredited = isWeekOver ? earnedPts : 0;
-        }
         const pendingPoints = Math.max(0, asItStands - alreadyCredited);
         totalWithWeek = yearlyTotal + pendingPoints;
       }
@@ -214,12 +230,32 @@ export default function MatrixDashboard() {
         asItStands,
         maxPossible,
         yearlyTotal,
+        initialPoints,
         totalWithWeek,
         liveLeadingPts
       };
     });
     return stats;
   }, [allUsers, activeProps, pickMap, propMap, userYearlyScores, userPeriodScores, currentWeekNumber, isWeekOver, isLatestWeek]);
+
+  // Rank Calculation Maps
+  const { initialRanks, liveRanks, weeklyRanks } = useMemo(() => {
+    const initScores = {};
+    const liveScores = {};
+    const weekScores = {};
+
+    allUsers.forEach(u => {
+      initScores[u] = userStats[u]?.initialPoints ?? 0;
+      liveScores[u] = userStats[u]?.totalWithWeek ?? 0;
+      weekScores[u] = userStats[u]?.asItStands ?? 0;
+    });
+
+    return {
+      initialRanks: selectedWeek === 0 ? {} : calculateRanks(initScores),
+      liveRanks: calculateRanks(liveScores),
+      weeklyRanks: calculateRanks(weekScores)
+    };
+  }, [allUsers, userStats, selectedWeek]);
 
   const sortedUnpinnedUsers = useMemo(() => {
     return [...unpinnedUsers].sort((a, b) => {
@@ -310,21 +346,17 @@ export default function MatrixDashboard() {
       csv += row.join(',') + '\n';
     });
 
-    const row1 = ['"Points Earned (Finalized)"'];
-    exportUsers.forEach(u => row1.push(`"${userStats[u]?.earnedPts || 0}"`));
-    csv += row1.join(',') + '\n';
+    const rows = [
+      ['"Points Earned (Finalized)"', ...exportUsers.map(u => `"${userStats[u]?.earnedPts || 0}"`)],
+      ['"As It Stands (Ties=0)"', ...exportUsers.map(u => `"${userStats[u]?.asItStands || 0}"`)],
+      ['"Max Points Possible"', ...exportUsers.map(u => `"${userStats[u]?.maxPossible || 0}"`)],
+      ['"Total (incl. Week)"', ...exportUsers.map(u => `"${userStats[u]?.totalWithWeek || 0}"`)],
+      ['"Initial Rank"', ...exportUsers.map(u => `"${initialRanks[u] || '—'}"`)],
+      ['"Live Rank"', ...exportUsers.map(u => `"${liveRanks[u] || '—'}"`)],
+      ['"Weekly Rank"', ...exportUsers.map(u => `"${weeklyRanks[u] || '—'}"`)]
+    ];
 
-    const row2 = ['"As It Stands (Ties=0)"'];
-    exportUsers.forEach(u => row2.push(`"${userStats[u]?.asItStands || 0}"`));
-    csv += row2.join(',') + '\n';
-
-    const row3 = ['"Max Points Possible"'];
-    exportUsers.forEach(u => row3.push(`"${userStats[u]?.maxPossible || 0}"`));
-    csv += row3.join(',') + '\n';
-
-    const row4 = ['"Total (incl. Week)"'];
-    exportUsers.forEach(u => row4.push(`"${userStats[u]?.totalWithWeek || 0}"`));
-    csv += row4.join(',') + '\n';
+    rows.forEach(r => { csv += r.join(',') + '\n'; });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -498,7 +530,6 @@ export default function MatrixDashboard() {
 
               return (
                 <tr key={prId} style={{ background: rowBg }}>
-                  {/* Column 1: Stacked Scoreboard */}
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
@@ -510,7 +541,6 @@ export default function MatrixDashboard() {
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.homeScore ?? ''}</span>
                     </div>
 
-                    {/* Clock & Split Ratio Analytics */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
@@ -523,7 +553,6 @@ export default function MatrixDashboard() {
                     </div>
                   </td>
 
-                  {/* Column 2: Pinned User */}
                   <td className="col-pinned" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: rowBg, textAlign: 'center' }}>
                     {pinnedTeam === '—' ? (
                       <span style={{ color: '#475569' }}>—</span>
@@ -537,7 +566,6 @@ export default function MatrixDashboard() {
                     )}
                   </td>
 
-                  {/* Other Competitors */}
                   {sortedUnpinnedUsers.map(u => {
                     const pick = pickMap[u]?.[prId];
                     const team = resolveTeamName(pick, prId);
@@ -619,16 +647,64 @@ export default function MatrixDashboard() {
 
             {/* Bottom Row 4: Total (incl. Week) */}
             <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
-              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
                 <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
                 <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
               </td>
-              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
-                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 5: Initial Rank */}
+            <tr style={{ background: '#0f172a' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#94a3b8', fontSize: '11px', lineHeight: 1.1 }}>Initial Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>Entering Wk</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#94a3b8' }}>{initialRanks[pinnedUser] || '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#94a3b8' }}>{initialRanks[u] || '—'}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 6: Live Rank */}
+            <tr style={{ background: '#0b1120' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px', lineHeight: 1.1 }}>Live Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>Overall Now</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#38bdf8' }}>{liveRanks[pinnedUser] || '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#38bdf8' }}>{liveRanks[u] || '—'}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 7: Weekly Rank */}
+            <tr style={{ background: '#111827', borderBottom: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#f472b6', fontSize: '11px', lineHeight: 1.1 }}>Weekly Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>This Week</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#f472b6' }}>{weeklyRanks[pinnedUser] || '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#f472b6' }}>{weeklyRanks[u] || '—'}</div>
                 </td>
               ))}
             </tr>
