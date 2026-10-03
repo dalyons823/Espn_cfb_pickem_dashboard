@@ -5,7 +5,7 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch challenge metadata to dynamically get the active week and its official 10 propositions
+    // 1. Fetch challenge definition to dynamically get the active week and its propositions
     const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}`, {
       next: { revalidate: 30 }
     });
@@ -121,13 +121,13 @@ export async function GET() {
       return false;
     }
 
-    // 3. Register the 10 official propositions from this week's active challenge
+    // 3. Register propositions
     const propMap = {};
-    const contestPropIds = [];
+    const rawPropIds = [];
 
     activePropositions.forEach(rawProp => {
       const idStr = String(rawProp.id);
-      contestPropIds.push(idStr);
+      rawPropIds.push(idStr);
 
       const outcomes = rawProp.possibleOutcomes || rawProp.outcomes || [];
       const rawAway = outcomes[0]?.shortDisplayName || outcomes[0]?.abbreviation || outcomes[0]?.name || outcomes[0]?.caption || 'Away';
@@ -189,16 +189,6 @@ export async function GET() {
       };
     });
 
-    // Sort strictly chronologically by kickoff time ascending
-    contestPropIds.sort((a, b) => {
-      const tA = propMap[a]?.kickoffTime || 0;
-      const tB = propMap[b]?.kickoffTime || 0;
-      if (tA && tB && tA !== tB) return tA - tB;
-      if (tA && !tB) return -1;
-      if (!tA && tB) return 1;
-      return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
-    });
-
     // 4. Fetch Group Leaderboard and Picks
     const groupRes = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`,
@@ -214,6 +204,7 @@ export async function GET() {
     const pickMap = {};
     const userYearlyScores = {};
     const userPeriodScores = {};
+    const gamePickCounts = {};
 
     function extractScore(obj) {
       if (!obj) return null;
@@ -279,7 +270,7 @@ export async function GET() {
       picks.forEach(p => {
         const propId = String(p.propositionId || '');
         const propInfo = propMap[propId];
-        if (!propInfo) return; // Ignores any picks not in this week's active slate
+        if (!propInfo) return;
 
         const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || p.outcome?.id || '');
         const clean = rawOutcome.toLowerCase().replace(/[^a-z0-9]/gi, '');
@@ -303,6 +294,10 @@ export async function GET() {
           else if (clean.endsWith('2')) side = 'home';
         }
 
+        if (side) {
+          gamePickCounts[propId] = (gamePickCounts[propId] || 0) + 1;
+        }
+
         pickMap[userName][propId] = {
           side,
           pts: p.confidenceScore || null
@@ -312,11 +307,36 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
+    // 5. PURGE GHOST GAMES:
+    // A game is an authentic contest matchup if it has picks in our group OR is not finished yet.
+    // If a game is finished (or live) and has 0 picks across the ENTIRE group, it is an extra game (BC, ND, UCF, VAN) and gets eliminated.
+    const validContestPropIds = rawPropIds.filter(id => {
+      const propInfo = propMap[id];
+      const hasPicks = (gamePickCounts[id] || 0) > 0;
+      const isPreGame = !propInfo?.score || propInfo.score.state === 'pre';
+
+      // Keep if group picked it OR if it has not started yet
+      return hasPicks || isPreGame;
+    });
+
+    // 6. Chronological Kickoff Sort
+    validContestPropIds.sort((a, b) => {
+      const tA = propMap[a]?.kickoffTime || 0;
+      const tB = propMap[b]?.kickoffTime || 0;
+      if (tA && tB && tA !== tB) return tA - tB;
+      if (tA && !tB) return -1;
+      if (!tA && tB) return 1;
+      return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
+    });
+
+    // Take the official 10 games
+    const activeProps = validContestPropIds.slice(0, 10);
+
     return NextResponse.json({
       myUser,
       otherUsers,
       weekNumber: activeWeek,
-      activeProps: contestPropIds,
+      activeProps,
       propMap,
       pickMap,
       userYearlyScores,
