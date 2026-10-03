@@ -566,4 +566,294 @@ export default function MatrixDashboard() {
               </th>
 
               {sortedUnpinnedUsers.map(u => {
-                const st = userStats[u] || 
+                const st = userStats[u] || { totalWithWeek: 0 };
+                return (
+                  <th key={u} className="col-other" style={{ padding: '8px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', color: '#e2e8f0', textAlign: 'center' }}>
+                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '76px' }}>{u}</div>
+                    <div style={{ fontSize: '10px', color: '#93c5fd', fontWeight: 600 }}>({st.totalWithWeek} pts)</div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {activeProps.map((prId, gIdx) => {
+              const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
+              const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
+
+              const counts = { away: 0, home: 0 };
+              allUsers.forEach(u => {
+                const p = pickMap[u]?.[prId];
+                if (p?.side === 'away') counts.away++;
+                if (p?.side === 'home') counts.home++;
+              });
+
+              const pinnedPick = pickMap[pinnedUser]?.[prId];
+
+              const sc = propInfo.score;
+              const isLive = sc?.state === 'in';
+              const isFinal = sc?.state === 'post';
+
+              const awayLabel = formatAbbr(propInfo.away);
+              const homeLabel = formatAbbr(propInfo.home);
+
+              return (
+                <tr key={prId} style={{ background: rowBg }}>
+                  <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
+                      <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.awayScore ?? ''}</span>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
+                      <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.homeScore ?? ''}</span>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
+                      <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
+                        {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
+                      </span>
+                      {(counts.away > 0 || counts.home > 0) ? (
+                        <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span>
+                      ) : (
+                        <span style={{ color: '#64748b', fontSize: '8px' }}>🔒 At kick</span>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Pinned User Column */}
+                  <td className="col-pinned" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: rowBg, textAlign: 'center' }}>
+                    {renderPickPill(pinnedPick, prId)}
+                  </td>
+
+                  {/* Other Competitors */}
+                  {sortedUnpinnedUsers.map(u => {
+                    const pick = pickMap[u]?.[prId];
+                    return (
+                      <td key={u} className="col-other" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1e293b', textAlign: 'center', verticalAlign: 'middle' }}>
+                        {renderPickPill(pick, prId)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+
+            {/* Bottom Row 1: Points Earned */}
+            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px', lineHeight: 1.1 }}>Points Earned</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Finalized Won</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#38bdf8' }}>{pinnedStats.earnedPts}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#38bdf8' }}>{userStats[u]?.earnedPts || 0}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 2: As It Stands */}
+            <tr style={{ background: '#0f172a' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#a78bfa', fontSize: '11px', lineHeight: 1.1 }}>As It Stands</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Ties = 0 pts</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#a78bfa' }}>{pinnedStats.asItStands}</div>
+                {pinnedStats.liveLeadingPts > 0 && (
+                  <div style={{ fontSize: '8px', color: '#22c55e' }}>+{pinnedStats.liveLeadingPts} live</div>
+                )}
+              </td>
+              {sortedUnpinnedUsers.map(u => {
+                const st = userStats[u] || { asItStands: 0, liveLeadingPts: 0 };
+                return (
+                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#a78bfa' }}>{st.asItStands}</div>
+                    {st.liveLeadingPts > 0 && (
+                      <div style={{ fontSize: '8px', color: '#22c55e' }}>+{st.liveLeadingPts} live</div>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Bottom Row 3: Max Possible */}
+            <tr style={{ background: '#0b1120' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#f59e0b', fontSize: '11px', lineHeight: 1.1 }}>Max Possible</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Max Potential</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#f59e0b' }}>{pinnedStats.maxPossible}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#fbbf24' }}>{userStats[u]?.maxPossible || 0}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 4: Total (incl. Week) */}
+            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 5: Initial Rank */}
+            <tr style={{ background: '#0f172a' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#94a3b8', fontSize: '11px', lineHeight: 1.1 }}>Initial Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>Entering Wk</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#94a3b8' }}>{initialRanks[pinnedUser] ? `#${initialRanks[pinnedUser]}` : '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#94a3b8' }}>{initialRanks[u] ? `#${initialRanks[u]}` : '—'}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 6: Live Rank */}
+            <tr style={{ background: '#0b1120' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px', lineHeight: 1.1 }}>Live Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>Overall Now</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#38bdf8' }}>{liveRanks[pinnedUser] ? `#${liveRanks[pinnedUser]}` : '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#38bdf8' }}>{liveRanks[u] ? `#${liveRanks[u]}` : '—'}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 7: Weekly Rank */}
+            <tr style={{ background: '#111827', borderBottom: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#f472b6', fontSize: '11px', lineHeight: 1.1 }}>Weekly Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>This Week</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#f472b6' }}>{weeklyRanks[pinnedUser] ? `#${weeklyRanks[pinnedUser]}` : '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#f472b6' }}>{weeklyRanks[u] ? `#${weeklyRanks[u]}` : '—'}</div>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+
+        {/* 3-Column Standings Leaderboard */}
+        <div style={{ padding: '16px 10px 48px 10px', maxWidth: '620px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc' }}>🏆 Leaderboard & Rankings</span>
+            <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>Week {currentWeekNumber}</span>
+          </div>
+
+          <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '8px', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
+              <thead>
+                <tr style={{ background: '#1e293b', borderBottom: '2px solid #374151' }}>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#94a3b8', fontWeight: 700, width: '33.33%', borderRight: '1px solid #1f2937' }}>
+                    Initial Rank
+                  </th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#38bdf8', fontWeight: 700, width: '33.33%', borderRight: '1px solid #1f2937' }}>
+                    Current Rank
+                  </th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#f472b6', fontWeight: 700, width: '33.33%' }}>
+                    Weekly Rank
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {allUsers.map((_, idx) => {
+                  const uInit = sortedByInitial[idx];
+                  const uLive = sortedByLive[idx];
+                  const uWeek = sortedByWeekly[idx];
+
+                  const initRank = uInit ? (initialRanks[uInit] || (idx + 1)) : '—';
+                  const liveRank = uLive ? (liveRanks[uLive] || (idx + 1)) : '—';
+                  const weekRank = uWeek ? (weeklyRanks[uWeek] || (idx + 1)) : '—';
+
+                  const rowBg = idx % 2 === 0 ? '#0b1120' : '#0e1626';
+
+                  return (
+                    <tr key={idx} style={{ background: rowBg, borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uInit ? (
+                          <>
+                            <span style={{ color: '#64748b', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {initRank}.
+                            </span>
+                            <span style={{ fontWeight: uInit === pinnedUser ? 800 : 600, color: uInit === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uInit === pinnedUser ? '⭐ ' : ''}{uInit}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uInit]?.initialPoints ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+
+                      <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uLive ? (
+                          <>
+                            <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {liveRank}.
+                            </span>
+                            <span style={{ fontWeight: uLive === pinnedUser ? 800 : 600, color: uLive === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uLive === pinnedUser ? '⭐ ' : ''}{uLive}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uLive]?.totalWithWeek ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+
+                      <td style={{ padding: '6px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uWeek ? (
+                          <>
+                            <span style={{ color: '#f472b6', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {weekRank}.
+                            </span>
+                            <span style={{ fontWeight: uWeek === pinnedUser ? 800 : 600, color: uWeek === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uWeek === pinnedUser ? '⭐ ' : ''}{uWeek}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uWeek]?.asItStands ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
