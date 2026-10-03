@@ -184,9 +184,10 @@ export default function MatrixDashboard() {
 
   // Format kickoff in user's device local timezone
   const formatDeviceTime = (propInfo) => {
-    if (!propInfo?.kickoffDate && !propInfo?.kickoffTime) return 'Upcoming';
+    const dateVal = propInfo?.kickoffDate || propInfo?.kickoffTime;
+    if (!dateVal) return 'Upcoming';
     try {
-      const d = new Date(propInfo.kickoffDate || propInfo.kickoffTime);
+      const d = new Date(dateVal);
       if (isNaN(d.getTime())) return 'Upcoming';
       return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     } catch (e) {
