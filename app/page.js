@@ -23,49 +23,14 @@ const ABBR_FALLBACKS = {
   'arizona state': 'ASU',
   'cincinnati': 'CIN',
   'arizona': 'ARIZ',
-  'boise state': 'BSU',
-  'western michigan': 'WMU',
-  'michigan state': 'MSU',
-  'james madison': 'JMU',
-  'old dominion': 'ODU',
-  'ole miss': 'MISS',
-  'texas': 'TEX',
-  'tennessee': 'TENN',
-  'nebraska': 'NEB',
-  'oklahoma': 'OU',
-  'georgia': 'UGA',
-  'notre dame': 'ND',
-  'purdue': 'PUR',
-  'utah': 'UTAH',
-  'houston': 'HOU',
-  'georgia southern': 'GASO',
-  'illinois': 'ILL',
-  'sam houston': 'SHSU',
-  'texas tech': 'TTU',
-  'wake forest': 'WAKE',
-  'louisville': 'LOU',
-  'oklahoma state': 'OKST',
-  'lsu': 'LSU',
-  'oregon': 'ORE',
-  'washington': 'WASH',
-  'usc': 'USC',
-  'ucla': 'UCLA',
-  'penn state': 'PSU',
-  'wisconsin': 'WISC',
   'clemson': 'CLEM',
   'miami': 'MIA',
-  'north carolina': 'UNC',
-  'nc state': 'NCST',
-  'duke': 'DUKE',
-  'kansas': 'KU',
-  'kansas state': 'KSU',
-  'colorado': 'COLO',
-  'arkansas': 'ARK',
-  'auburn': 'AUB',
-  'vanderbilt': 'VAN',
-  'texas a&m': 'TAMU',
-  'rutgers': 'RUTG',
   'indiana': 'IU',
+  'rutgers': 'RUTG',
+  'texas': 'TEX',
+  'oklahoma': 'OU',
+  'georgia': 'UGA',
+  'tennessee': 'TENN'
 };
 
 function formatAbbr(name) {
@@ -89,7 +54,6 @@ export default function MatrixDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedWeek, setSelectedWeek] = useState(0);
   const [pinnedUser, setPinnedUser] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
   const [timeAgo, setTimeAgo] = useState('Just now');
@@ -113,12 +77,6 @@ export default function MatrixDashboard() {
           setPinnedUser(savedUser);
         } else {
           setPinnedUser(json.myUser || allMembers[0] || '');
-        }
-
-        if (json.currentWeek !== undefined && json.currentWeek !== null && json.currentWeek < (json.weekBlocks?.length || 0)) {
-          setSelectedWeek(json.currentWeek);
-        } else if (json.weekBlocks?.length) {
-          setSelectedWeek(json.weekBlocks.length - 1);
         }
       }
     } catch (err) {
@@ -158,26 +116,20 @@ export default function MatrixDashboard() {
     }
   };
 
-  const { weekBlocks = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {} } = data || {};
-  const activeProps = weekBlocks[selectedWeek] || [];
-  const currentWeekNumber = selectedWeek + 1;
-  const isLatestWeek = selectedWeek === (weekBlocks.length - 1);
+  const { activeProps = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {}, weekNumber = 5 } = data || {};
   const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
 
   const resolveTeamName = (pickObj, prId) => {
-    const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { away: 'Away', home: 'Home' };
+    const propInfo = propMap[prId] || { away: 'Away', home: 'Home' };
     if (!pickObj || !pickObj.side) return '—';
     const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
     return formatAbbr(raw);
   };
 
-  const hasLiveGames = activeProps.some(prId => {
-    const st = propMap[prId]?.score?.state || propMap[String(prId).slice(0, 7)]?.score?.state;
-    return st === 'in';
-  });
+  const hasLiveGames = activeProps.some(prId => propMap[prId]?.score?.state === 'in');
   const hasUpcomingGames = activeProps.some(prId => {
-    const st = propMap[prId]?.score?.state || propMap[String(prId).slice(0, 7)]?.score?.state;
+    const st = propMap[prId]?.score?.state;
     return !st || st === 'pre';
   });
   const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
@@ -208,7 +160,7 @@ export default function MatrixDashboard() {
         const p = pickMap[u]?.[prId];
         const pts = p?.pts || 0;
 
-        const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)];
+        const propInfo = propMap[prId];
         const sc = propInfo?.score;
         const isFinal = sc?.state === 'post';
         const isLive = sc?.state === 'in';
@@ -232,19 +184,15 @@ export default function MatrixDashboard() {
       const yearlyTotal = userYearlyScores?.[u] ?? 0;
 
       let alreadyCredited = 0;
-      if (userPeriodScores?.[u]?.[currentWeekNumber] !== undefined) {
-        alreadyCredited = userPeriodScores[u][currentWeekNumber];
+      if (userPeriodScores?.[u]?.[weekNumber] !== undefined) {
+        alreadyCredited = userPeriodScores[u][weekNumber];
       } else if (isWeekOver) {
         alreadyCredited = earnedPts;
       }
 
       const initialPoints = Math.max(0, yearlyTotal - alreadyCredited);
-
-      let totalWithWeek = yearlyTotal;
-      if (isLatestWeek) {
-        const pendingPoints = Math.max(0, asItStands - alreadyCredited);
-        totalWithWeek = yearlyTotal + pendingPoints;
-      }
+      const pendingPoints = Math.max(0, asItStands - alreadyCredited);
+      const totalWithWeek = yearlyTotal + pendingPoints;
 
       stats[u] = {
         earnedPts,
@@ -257,7 +205,7 @@ export default function MatrixDashboard() {
       };
     });
     return stats;
-  }, [allUsers, activeProps, pickMap, propMap, userYearlyScores, userPeriodScores, currentWeekNumber, isWeekOver, isLatestWeek]);
+  }, [allUsers, activeProps, pickMap, propMap, userYearlyScores, userPeriodScores, weekNumber, isWeekOver]);
 
   // Rank Calculation Maps
   const { initialRanks, liveRanks, weeklyRanks } = useMemo(() => {
@@ -272,11 +220,11 @@ export default function MatrixDashboard() {
     });
 
     return {
-      initialRanks: selectedWeek === 0 ? {} : calculateRanks(initScores),
+      initialRanks: calculateRanks(initScores),
       liveRanks: calculateRanks(liveScores),
       weeklyRanks: calculateRanks(weekScores)
     };
-  }, [allUsers, userStats, selectedWeek]);
+  }, [allUsers, userStats]);
 
   const sortedByInitial = useMemo(() => {
     return [...allUsers].sort((a, b) => (userStats[b]?.initialPoints ?? 0) - (userStats[a]?.initialPoints ?? 0));
@@ -325,7 +273,7 @@ export default function MatrixDashboard() {
       return <span style={{ color: '#475569' }}>—</span>;
     }
 
-    const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)];
+    const propInfo = propMap[prId];
     const sc = propInfo?.score;
     const isPreGame = !sc || sc.state === 'pre';
     const isFinished = sc?.state === 'post';
@@ -422,7 +370,7 @@ export default function MatrixDashboard() {
     let csv = 'Matchup,' + exportUsers.map(u => `"${u.replace(/"/g, '""')} (${userStats[u]?.totalWithWeek || 0} pts)"`).join(',') + '\n';
 
     activeProps.forEach((prId, gIdx) => {
-      const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { title: `Game #${gIdx + 1}` };
+      const propInfo = propMap[prId] || { title: `Game #${gIdx + 1}` };
       const row = [`"${propInfo.title.replace(/"/g, '""')}"`];
 
       exportUsers.forEach(u => {
@@ -449,7 +397,7 @@ export default function MatrixDashboard() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `cfb_pickem_week_${currentWeekNumber}.csv`;
+    link.download = `cfb_pickem_week_${weekNumber}.csv`;
     link.click();
   };
 
@@ -538,17 +486,11 @@ export default function MatrixDashboard() {
 
       {/* Header Bar */}
       <div style={{ padding: '8px 10px', background: '#111827', borderBottom: '1px solid #1f2937', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
           <span style={{ fontSize: '14px', fontWeight: 800 }}>🏈</span>
-          <select
-            value={selectedWeek}
-            onChange={(e) => setSelectedWeek(Number(e.target.value))}
-            style={{ background: '#0f172a', color: '#38bdf8', border: '1px solid #334155', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700 }}
-          >
-            {weekBlocks.map((_, i) => (
-              <option key={i} value={i}>Week {i + 1}</option>
-            ))}
-          </select>
+          <span style={{ background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', borderRadius: '5px', padding: '3px 8px', fontSize: '11px', fontWeight: 800 }}>
+            Week {weekNumber}
+          </span>
           <select
             value={pinnedUser}
             onChange={(e) => handlePinnedUserChange(e.target.value)}
@@ -596,7 +538,7 @@ export default function MatrixDashboard() {
           </thead>
           <tbody>
             {activeProps.map((prId, gIdx) => {
-              const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
+              const propInfo = propMap[prId] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
               const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
 
               const counts = { away: 0, home: 0 };
@@ -619,7 +561,7 @@ export default function MatrixDashboard() {
               return (
                 <tr key={prId} style={{ background: rowBg }}>
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team: Keep scores blank until kickoff */}
+                    {/* Away Team: Scores blank if unstarted */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -627,7 +569,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Home Team: Keep scores blank until kickoff */}
+                    {/* Home Team: Scores blank if unstarted */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -635,7 +577,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Clock & Status formatted in device local time */}
+                    {/* Clock & Status formatted in user's device local timezone */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}
@@ -725,7 +667,7 @@ export default function MatrixDashboard() {
 
             {/* Bottom Row 4: Total (incl. Week) */}
             <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
-              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
                 <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
                 <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
               </td>
@@ -733,7 +675,7 @@ export default function MatrixDashboard() {
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
-                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
                 </td>
               ))}
@@ -793,7 +735,7 @@ export default function MatrixDashboard() {
         <div style={{ padding: '16px 10px 48px 10px', maxWidth: '620px', margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc' }}>🏆 Leaderboard & Rankings</span>
-            <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>Week {currentWeekNumber}</span>
+            <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>Week {weekNumber}</span>
           </div>
 
           <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '8px', overflow: 'hidden' }}>
