@@ -1,399 +1,885 @@
 'use client';
+
 import { useState, useEffect, useMemo } from 'react';
 
-export default function Dashboard() {
-  const [data, setData] = useState(null);
-  const [selectedWeek, setSelectedWeek] = useState(5);
-  const [loading, setLoading] = useState(true);
+const ABBR_FALLBACKS = {
+  'alabama': 'BAMA',
+  'mississippi state': 'MSST',
+  'west virginia': 'WVU',
+  'iowa state': 'ISU',
+  'michigan': 'MICH',
+  'minnesota': 'MINN',
+  'ohio state': 'OSU',
+  'iowa': 'IOWA',
+  'florida': 'FLA',
+  'missouri': 'MIZ',
+  'virginia': 'UVA',
+  'florida state': 'FSU',
+  'kentucky': 'UK',
+  'south carolina': 'SC',
+  'byu': 'BYU',
+  'tcu': 'TCU',
+  'baylor': 'BAY',
+  'arizona state': 'ASU',
+  'cincinnati': 'CIN',
+  'arizona': 'ARIZ',
+  'boise state': 'BSU',
+  'western michigan': 'WMU',
+  'michigan state': 'MSU',
+  'james madison': 'JMU',
+  'old dominion': 'ODU',
+  'ole miss': 'MISS',
+  'texas': 'TEX',
+  'tennessee': 'TENN',
+  'nebraska': 'NEB',
+  'oklahoma': 'OU',
+  'georgia': 'UGA',
+  'notre dame': 'ND',
+  'purdue': 'PUR',
+  'utah': 'UTAH',
+  'houston': 'HOU',
+  'georgia southern': 'GASO',
+  'illinois': 'ILL',
+  'sam houston': 'SHSU',
+  'texas tech': 'TTU',
+  'wake forest': 'WAKE',
+  'louisville': 'LOU',
+  'oklahoma state': 'OKST',
+  'lsu': 'LSU',
+  'oregon': 'ORE',
+  'washington': 'WASH',
+  'usc': 'USC',
+  'ucla': 'UCLA',
+  'penn state': 'PSU',
+  'wisconsin': 'WISC',
+  'clemson': 'CLEM',
+  'miami': 'MIA',
+  'north carolina': 'UNC',
+  'nc state': 'NCST',
+  'duke': 'DUKE',
+  'kansas': 'KU',
+  'kansas state': 'KSU',
+  'colorado': 'COLO',
+  'arkansas': 'ARK',
+  'auburn': 'AUB',
+  'vanderbilt': 'VAN',
+  'texas a&m': 'TAMU',
+  'rutgers': 'RUTG',
+  'indiana': 'IU',
+};
 
-  const loadData = async (week) => {
+function formatAbbr(name) {
+  if (!name) return '—';
+  const clean = name.trim().toLowerCase();
+  return ABBR_FALLBACKS[clean] || name;
+}
+
+function calculateRanks(scoreMap) {
+  const entries = Object.entries(scoreMap).sort((a, b) => b[1] - a[1]);
+  const ranks = {};
+  entries.forEach(([user, score]) => {
+    const tiedCount = entries.filter(e => e[1] === score).length;
+    const firstIdx = entries.findIndex(e => e[1] === score);
+    ranks[user] = tiedCount > 1 ? `T-${firstIdx + 1}` : `${firstIdx + 1}`;
+  });
+  return ranks;
+}
+
+export default function MatrixDashboard() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedWeek, setSelectedWeek] = useState(0);
+  const [pinnedUser, setPinnedUser] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [timeAgo, setTimeAgo] = useState('Just now');
+  const [isOffline, setIsOffline] = useState(false);
+
+  const fetchPicks = async (isBackground = false) => {
     try {
-      const res = await fetch(`/api/picks?week=${week}`);
+      if (!isBackground) setLoading(true);
+      const res = await fetch('/api/picks');
+      if (!res.ok) throw new Error('Failed to load picks');
       const json = await res.json();
-      if (!json.error) {
-        setData(json);
+      setData(json);
+      setLastUpdated(Date.now());
+      setIsOffline(false);
+
+      const allMembers = [json.myUser, ...(json.otherUsers || [])].filter(Boolean);
+      const savedUser = typeof window !== 'undefined' ? localStorage.getItem('cfb_pinned_user') : null;
+
+      if (!isBackground) {
+        if (savedUser && allMembers.includes(savedUser)) {
+          setPinnedUser(savedUser);
+        } else {
+          setPinnedUser(json.myUser || allMembers[0] || '');
+        }
+
+        if (json.currentWeek !== undefined && json.currentWeek !== null && json.currentWeek < (json.weekBlocks?.length || 0)) {
+          setSelectedWeek(json.currentWeek);
+        } else if (json.weekBlocks?.length) {
+          setSelectedWeek(json.weekBlocks.length - 1);
+        }
       }
     } catch (err) {
-      console.error('Failed to load picks:', err);
+      if (!isBackground) {
+        setError(err.message);
+      } else {
+        setIsOffline(true);
+      }
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
   useEffect(() => {
-    setLoading(true);
-    loadData(selectedWeek);
-    const interval = setInterval(() => loadData(selectedWeek), 30000);
-    return () => clearInterval(interval);
-  }, [selectedWeek]);
+    fetchPicks();
+    const refreshInterval = setInterval(() => {
+      fetchPicks(true);
+    }, 45000);
+    return () => clearInterval(refreshInterval);
+  }, []);
 
-  // Derived Calculations for Bottom Summary Rows & Standings
-  const summaryStats = useMemo(() => {
-    if (!data?.members || !data?.matchups) return {};
+  useEffect(() => {
+    const ticker = setInterval(() => {
+      if (!lastUpdated) return;
+      const elapsedSec = Math.floor((Date.now() - lastUpdated) / 1000);
+      if (elapsedSec < 10) setTimeAgo('Just now');
+      else if (elapsedSec < 60) setTimeAgo(`${elapsedSec}s ago`);
+      else setTimeAgo(`${Math.floor(elapsedSec / 60)}m ago`);
+    }, 5000);
+    return () => clearInterval(ticker);
+  }, [lastUpdated]);
 
+  const handlePinnedUserChange = (newUser) => {
+    setPinnedUser(newUser);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('cfb_pinned_user', newUser);
+    }
+  };
+
+  const { weekBlocks = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {} } = data || {};
+  const activeProps = weekBlocks[selectedWeek] || [];
+  const currentWeekNumber = selectedWeek + 1;
+  const isLatestWeek = selectedWeek === (weekBlocks.length - 1);
+  const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
+  const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
+
+  const resolveTeamName = (pickObj, prId) => {
+    const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { away: 'Away', home: 'Home' };
+    if (!pickObj || !pickObj.side) return '—';
+    const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
+    return formatAbbr(raw);
+  };
+
+  const hasLiveGames = activeProps.some(prId => {
+    const st = propMap[prId]?.score?.state || propMap[String(prId).slice(0, 7)]?.score?.state;
+    return st === 'in';
+  });
+  const hasUpcomingGames = activeProps.some(prId => {
+    const st = propMap[prId]?.score?.state || propMap[String(prId).slice(0, 7)]?.score?.state;
+    return !st || st === 'pre';
+  });
+  const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
+
+  // Format kickoff in user's device local timezone
+  const formatDeviceTime = (propInfo) => {
+    const dateVal = propInfo?.kickoffDate || propInfo?.kickoffTime;
+    if (!dateVal) return 'Upcoming';
+    try {
+      const d = new Date(dateVal);
+      if (isNaN(d.getTime())) return 'Upcoming';
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } catch (e) {
+      return 'Upcoming';
+    }
+  };
+
+  // Base Point Calculations
+  const userStats = useMemo(() => {
     const stats = {};
-    data.members.forEach((m) => {
-      let earned = 0;
-      let livePending = 0;
-      let maxPossible = 0;
 
-      data.matchups.forEach((game) => {
-        const pick = game.picks?.[m.id];
-        if (!pick?.pickedTeam) return;
+    allUsers.forEach(u => {
+      let earnedPts = 0;
+      let liveLeadingPts = 0;
+      let weekLostPts = 0;
 
-        const conf = parseInt(pick.confidence || 0, 10);
-        const awayScore = game.awayScore ?? 0;
-        const homeScore = game.homeScore ?? 0;
-        const isLeading =
-          (pick.pickedTeam === game.awayTeam && awayScore > homeScore) ||
-          (pick.pickedTeam === game.homeTeam && homeScore > awayScore);
-        const isTied = awayScore === homeScore;
+      activeProps.forEach(prId => {
+        const p = pickMap[u]?.[prId];
+        const pts = p?.pts || 0;
 
-        if (game.isFinal) {
-          if (isLeading) {
-            earned += conf;
-            maxPossible += conf;
+        const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)];
+        const sc = propInfo?.score;
+        const isFinal = sc?.state === 'post';
+        const isLive = sc?.state === 'in';
+        const leader = sc?.leader;
+
+        if (isFinal) {
+          if (p?.side && leader && leader !== 'tie' && p.side === leader) {
+            earnedPts += pts;
+          } else {
+            weekLostPts += pts;
           }
-        } else if (game.isLive) {
-          maxPossible += conf;
-          if (isLeading && !isTied) {
-            livePending += conf;
+        } else if (isLive) {
+          if (p?.side && leader && leader !== 'tie' && p.side === leader) {
+            liveLeadingPts += pts;
           }
-        } else {
-          // Scheduled
-          maxPossible += conf;
         }
       });
 
-      const asItStands = earned + livePending;
-      const priorTotal = m.totalPoints || 0;
-      const totalOverall = priorTotal + asItStands;
+      const asItStands = earnedPts + liveLeadingPts;
+      const maxPossible = 55 - weekLostPts;
+      const yearlyTotal = userYearlyScores?.[u] ?? 0;
 
-      stats[m.id] = {
-        earned,
+      let alreadyCredited = 0;
+      if (userPeriodScores?.[u]?.[currentWeekNumber] !== undefined) {
+        alreadyCredited = userPeriodScores[u][currentWeekNumber];
+      } else if (isWeekOver) {
+        alreadyCredited = earnedPts;
+      }
+
+      const initialPoints = Math.max(0, yearlyTotal - alreadyCredited);
+
+      let totalWithWeek = yearlyTotal;
+      if (isLatestWeek) {
+        const pendingPoints = Math.max(0, asItStands - alreadyCredited);
+        totalWithWeek = yearlyTotal + pendingPoints;
+      }
+
+      stats[u] = {
+        earnedPts,
         asItStands,
         maxPossible,
-        totalOverall,
-        priorTotal
+        yearlyTotal,
+        initialPoints,
+        totalWithWeek,
+        liveLeadingPts
       };
     });
-
     return stats;
-  }, [data]);
+  }, [allUsers, activeProps, pickMap, propMap, userYearlyScores, userPeriodScores, currentWeekNumber, isWeekOver, isLatestWeek]);
 
-  // Standings rankings calculation
-  const standings = useMemo(() => {
-    if (!data?.members || Object.keys(summaryStats).length === 0) return [];
+  // Rank Calculation Maps
+  const { initialRanks, liveRanks, weeklyRanks } = useMemo(() => {
+    const initScores = {};
+    const liveScores = {};
+    const weekScores = {};
 
-    const list = data.members.map((m) => ({
-      ...m,
-      stats: summaryStats[m.id]
-    }));
-
-    // Weekly rank sort
-    const weeklySorted = [...list].sort((a, b) => b.stats.asItStands - a.stats.asItStands);
-    const weeklyRanks = {};
-    weeklySorted.forEach((item, idx) => {
-      weeklyRanks[item.id] = idx + 1;
+    allUsers.forEach(u => {
+      initScores[u] = userStats[u]?.initialPoints ?? 0;
+      liveScores[u] = userStats[u]?.totalWithWeek ?? 0;
+      weekScores[u] = userStats[u]?.asItStands ?? 0;
     });
 
-    // Current overall rank sort
-    const overallSorted = [...list].sort((a, b) => b.stats.totalOverall - a.stats.totalOverall);
-    return overallSorted.map((item, idx) => ({
-      ...item,
-      currentRank: idx + 1,
-      weeklyRank: weeklyRanks[item.id]
-    }));
-  }, [data, summaryStats]);
+    return {
+      initialRanks: selectedWeek === 0 ? {} : calculateRanks(initScores),
+      liveRanks: calculateRanks(liveScores),
+      weeklyRanks: calculateRanks(weekScores)
+    };
+  }, [allUsers, userStats, selectedWeek]);
 
-  const userMember = data?.members?.find((m) => m.isUser);
-  const userStats = userMember ? summaryStats[userMember.id] : null;
+  const sortedByInitial = useMemo(() => {
+    return [...allUsers].sort((a, b) => (userStats[b]?.initialPoints ?? 0) - (userStats[a]?.initialPoints ?? 0));
+  }, [allUsers, userStats]);
 
-  if (loading && !data) {
+  const sortedByLive = useMemo(() => {
+    return [...allUsers].sort((a, b) => (userStats[b]?.totalWithWeek ?? 0) - (userStats[a]?.totalWithWeek ?? 0));
+  }, [allUsers, userStats]);
+
+  const sortedByWeekly = useMemo(() => {
+    return [...allUsers].sort((a, b) => (userStats[b]?.asItStands ?? 0) - (userStats[a]?.asItStands ?? 0));
+  }, [allUsers, userStats]);
+
+  const sortedUnpinnedUsers = useMemo(() => {
+    return [...unpinnedUsers].sort((a, b) => {
+      const statsA = userStats[a] || { totalWithWeek: 0, asItStands: 0 };
+      const statsB = userStats[b] || { totalWithWeek: 0, asItStands: 0 };
+
+      if (statsB.totalWithWeek !== statsA.totalWithWeek) {
+        return statsB.totalWithWeek - statsA.totalWithWeek;
+      }
+      return statsB.asItStands - statsA.asItStands;
+    });
+  }, [unpinnedUsers, userStats]);
+
+  if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#070b14] text-slate-400">
-        Loading Week {selectedWeek} Pick&apos;em...
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#0b1120' }}>
+        <div style={{ fontSize: '30px', marginBottom: '10px' }}>🏈</div>
+        <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 600 }}>Syncing scores & standings...</div>
       </div>
     );
   }
 
+  if (error || !data) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#0b1120', color: '#f87171' }}>
+        Failed to load data: {error}
+      </div>
+    );
+  }
+
+  const renderPickPill = (pickObj, prId) => {
+    const team = resolveTeamName(pickObj, prId);
+    if (!pickObj || !pickObj.side || team === '—') {
+      return <span style={{ color: '#475569' }}>—</span>;
+    }
+
+    const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)];
+    const sc = propInfo?.score;
+    const isPreGame = !sc || sc.state === 'pre';
+    const isFinished = sc?.state === 'post';
+    const isLive = sc?.state === 'in';
+    const leader = sc?.leader;
+
+    const isWinning = Boolean(!isPreGame && sc && leader && leader !== 'tie' && pickObj?.side === leader);
+    const isLosing = Boolean(!isPreGame && sc && leader && leader !== 'tie' && pickObj?.side !== leader);
+
+    let border = '1px solid transparent';
+    let opacity = '1';
+
+    if (isLive || isFinished) {
+      if (isWinning) {
+        border = '1.5px solid #22c55e';
+      } else if (isLosing) {
+        border = '1.5px solid #ef4444';
+        if (isFinished) opacity = '0.65';
+      }
+    }
+
+    let hash = 0;
+    for (let i = 0; i < team.length; i++) hash = team.charCodeAt(i) + ((hash << 5) - hash);
+    const hues = [210, 150, 270, 25, 190, 340, 45, 120, 290];
+    const hue = hues[Math.abs(hash) % hues.length];
+
+    const pillStyle = {
+      background: `hsl(${hue}, 40%, 16%)`,
+      color: `hsl(${hue}, 85%, 75%)`,
+      border: border !== '1px solid transparent' ? border : `1px solid hsl(${hue}, 50%, 25%)`,
+      opacity
+    };
+
+    return (
+      <div className="pill-box" style={pillStyle}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{team}</span>
+        {pickObj?.pts && (
+          <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pickObj.pts}</span>
+        )}
+
+        {/* Bottom-Left Result Badges for Finalized Games */}
+        {isFinished && isWinning && (
+          <span
+            style={{
+              position: 'absolute',
+              bottom: '-3px',
+              left: '-3px',
+              width: '12px',
+              height: '12px',
+              background: '#22c55e',
+              color: '#ffffff',
+              borderRadius: '50%',
+              fontSize: '8px',
+              fontWeight: 900,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 0 4px rgba(0,0,0,0.8)',
+              lineHeight: 1
+            }}
+          >
+            ✓
+          </span>
+        )}
+        {isFinished && isLosing && (
+          <span
+            style={{
+              position: 'absolute',
+              bottom: '-3px',
+              left: '-3px',
+              width: '12px',
+              height: '12px',
+              background: '#ef4444',
+              color: '#ffffff',
+              borderRadius: '50%',
+              fontSize: '8px',
+              fontWeight: 900,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 0 4px rgba(0,0,0,0.8)',
+              lineHeight: 1
+            }}
+          >
+            ✕
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const exportCSV = () => {
+    const exportUsers = [pinnedUser, ...sortedUnpinnedUsers];
+    let csv = 'Matchup,' + exportUsers.map(u => `"${u.replace(/"/g, '""')} (${userStats[u]?.totalWithWeek || 0} pts)"`).join(',') + '\n';
+
+    activeProps.forEach((prId, gIdx) => {
+      const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { title: `Game #${gIdx + 1}` };
+      const row = [`"${propInfo.title.replace(/"/g, '""')}"`];
+
+      exportUsers.forEach(u => {
+        const p = pickMap[u]?.[prId];
+        const team = resolveTeamName(p, prId);
+        const val = team !== '—' ? `${team}${p?.pts ? ` (${p.pts})` : ''}` : '—';
+        row.push(`"${val.replace(/"/g, '""')}"`);
+      });
+      csv += row.join(',') + '\n';
+    });
+
+    const rows = [
+      ['"Points Earned (Finalized)"', ...exportUsers.map(u => `"${userStats[u]?.earnedPts || 0}"`)],
+      ['"As It Stands (Ties=0)"', ...exportUsers.map(u => `"${userStats[u]?.asItStands || 0}"`)],
+      ['"Max Points Possible"', ...exportUsers.map(u => `"${userStats[u]?.maxPossible || 0}"`)],
+      ['"Total (incl. Week)"', ...exportUsers.map(u => `"${userStats[u]?.totalWithWeek || 0}"`)],
+      ['"Initial Rank"', ...exportUsers.map(u => `"${initialRanks[u] || '—'}"`)],
+      ['"Live Rank"', ...exportUsers.map(u => `"${liveRanks[u] || '—'}"`)],
+      ['"Weekly Rank"', ...exportUsers.map(u => `"${weeklyRanks[u] || '—'}"`)]
+    ];
+
+    rows.forEach(r => { csv += r.join(',') + '\n'; });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `cfb_pickem_week_${currentWeekNumber}.csv`;
+    link.click();
+  };
+
+  const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, yearlyTotal: 0 };
+
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 font-sans pb-16">
-      {/* Top Header Controls */}
-      <header className="sticky top-0 z-30 bg-[#0b132b]/95 backdrop-blur border-b border-slate-800 px-4 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-xl">🏈</span>
-            <select
-              value={selectedWeek}
-              onChange={(e) => setSelectedWeek(Number(e.target.value))}
-              className="bg-[#1c2541] border border-slate-700 text-amber-400 font-bold px-3 py-1.5 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-400"
-            >
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map((w) => (
-                <option key={w} value={w}>
-                  Week {w}
-                </option>
-              ))}
-            </select>
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <style dangerouslySetInnerHTML={{ __html: `
+        .matrix-table {
+          width: max-content;
+          table-layout: fixed;
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+        .col-match {
+          position: sticky;
+          left: 0;
+          z-index: 20;
+          width: 128px;
+          min-width: 128px;
+          max-width: 128px;
+          box-sizing: border-box;
+          box-shadow: 2px 0 6px rgba(0,0,0,0.35);
+        }
+        .col-pinned {
+          position: sticky;
+          left: 128px;
+          z-index: 20;
+          width: 88px;
+          min-width: 88px;
+          max-width: 88px;
+          box-sizing: border-box;
+          box-shadow: 2px 0 6px rgba(0,0,0,0.35);
+        }
+        .col-other {
+          width: 84px;
+          min-width: 84px;
+          max-width: 84px;
+          box-sizing: border-box;
+        }
+        .pill-box {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          justify-content: flex-start;
+          gap: 3px;
+          padding: 3px 5px;
+          border-radius: 12px;
+          font-size: 11px;
+          font-weight: 700;
+          max-width: 78px;
+          white-space: nowrap;
+        }
+        .badge-pts {
+          padding: 1px 4px;
+          border-radius: 8px;
+          font-size: 9px;
+          font-weight: 800;
+        }
 
-          <div className="flex items-center gap-2">
-            <div className="bg-[#1c2541] border border-amber-500/50 text-amber-400 font-semibold px-3 py-1.5 rounded text-xs flex items-center gap-1.5">
-              <span>⭐ {userMember?.entryName || 'PosaParty'}</span>
-              <span className="text-slate-400 font-normal">
-                ({userStats?.totalOverall || userMember?.totalPoints || 0} pts)
-              </span>
-            </div>
-          </div>
+        @media (min-width: 768px) {
+          .col-match {
+            width: 180px;
+            min-width: 180px;
+            max-width: 180px;
+          }
+          .col-pinned {
+            left: 180px;
+            width: 120px;
+            min-width: 120px;
+            max-width: 120px;
+          }
+          .col-other {
+            min-width: 115px;
+            width: 115px;
+            max-width: 115px;
+          }
+          .pill-box {
+            padding: 4px 8px;
+            border-radius: 16px;
+            font-size: 12px;
+            max-width: 105px;
+          }
+        }
+      `}} />
+
+      {/* Header Bar */}
+      <div style={{ padding: '8px 10px', background: '#111827', borderBottom: '1px solid #1f2937', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+          <span style={{ fontSize: '14px', fontWeight: 800 }}>🏈</span>
+          <select
+            value={selectedWeek}
+            onChange={(e) => setSelectedWeek(Number(e.target.value))}
+            style={{ background: '#0f172a', color: '#38bdf8', border: '1px solid #334155', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700 }}
+          >
+            {weekBlocks.map((_, i) => (
+              <option key={i} value={i}>Week {i + 1}</option>
+            ))}
+          </select>
+          <select
+            value={pinnedUser}
+            onChange={(e) => handlePinnedUserChange(e.target.value)}
+            style={{ background: '#0f172a', color: '#f59e0b', border: '1px solid #d97706', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700, maxWidth: '120px' }}
+          >
+            {allUsers.map(u => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+          </select>
         </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto p-2 sm:p-4 space-y-6">
-        {/* Main Pick Table */}
-        <div className="relative overflow-x-auto rounded-lg border border-slate-800 bg-[#0d162a] shadow-xl">
-          <table className="w-full border-collapse text-left text-xs sm:text-sm">
-            <thead>
-              <tr className="border-b border-slate-800 bg-[#0b132b] text-slate-400">
-                <th className="sticky left-0 z-20 bg-[#0b132b] p-3 min-w-[145px] sm:min-w-[180px] font-semibold text-slate-300 shadow-[1px_0_0_0_#1e293b]">
-                  Score / Matchup
-                </th>
-                {data?.members?.map((m) => (
-                  <th
-                    key={m.id}
-                    className={`p-3 text-center whitespace-nowrap min-w-[125px] font-semibold ${
-                      m.isUser
-                        ? 'sticky left-[145px] sm:left-[180px] z-20 bg-[#16223f] text-amber-400 shadow-[1px_0_0_0_#1e293b]'
-                        : 'text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-center gap-1">
-                      {m.isUser && <span>⭐</span>}
-                      <span>{m.entryName}</span>
-                    </div>
-                    <div className="text-[11px] font-normal text-slate-400">
-                      ({summaryStats[m.id]?.totalOverall ?? m.totalPoints} pts)
-                    </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontSize: '9px', color: isOffline ? '#ef4444' : '#64748b', fontWeight: 600, whiteSpace: 'nowrap' }}>
+            {isOffline ? '⚠️ Offline' : timeAgo}
+          </span>
+          <button onClick={() => fetchPicks(false)} style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
+          <button onClick={exportCSV} style={{ background: '#334155', border: '1px solid #475569', color: '#fff', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>📥</button>
+        </div>
+      </div>
+
+      {/* Main Table Viewport */}
+      <div style={{ flex: 1, overflow: 'auto', background: '#0b1120' }}>
+        <table className="matrix-table" style={{ fontSize: '12px', textAlign: 'left' }}>
+          <thead>
+            <tr style={{ position: 'sticky', top: 0, zIndex: 30 }}>
+              <th className="col-match" style={{ padding: '8px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', color: '#93c5fd', fontWeight: 700 }}>
+                Score / Matchup
+              </th>
+              
+              <th className="col-pinned" style={{ padding: '8px 4px', background: '#1e293b', borderBottom: '2px solid #f59e0b', borderRight: '2px solid #f59e0b', color: '#f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>⭐ {pinnedUser}</div>
+                <div style={{ fontSize: '10px', color: '#fcd34d', fontWeight: 700 }}>({pinnedStats.totalWithWeek} pts)</div>
+              </th>
+
+              {sortedUnpinnedUsers.map(u => {
+                const st = userStats[u] || { totalWithWeek: 0 };
+                return (
+                  <th key={u} className="col-other" style={{ padding: '8px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', color: '#e2e8f0', textAlign: 'center' }}>
+                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '76px' }}>{u}</div>
+                    <div style={{ fontSize: '10px', color: '#93c5fd', fontWeight: 600 }}>({st.totalWithWeek} pts)</div>
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {data?.matchups?.map((game) => (
-                <tr key={game.id} className="hover:bg-slate-800/20 transition-colors">
-                  {/* Left Column: Matchup & Live Score */}
-                  <td className="sticky left-0 z-10 bg-[#0d162a] p-2.5 sm:p-3 shadow-[1px_0_0_0_#1e293b]">
-                    <div className="flex items-center justify-between font-bold text-slate-200">
-                      <span className="truncate">{game.awayTeam}</span>
-                      <span className="font-mono">{game.awayScore ?? ''}</span>
-                    </div>
-                    <div className="flex items-center justify-between font-bold text-slate-200">
-                      <span className="truncate">@{game.homeTeam}</span>
-                      <span className="font-mono">{game.homeScore ?? ''}</span>
-                    </div>
-                    <div className="flex items-center justify-between mt-1 text-[11px]">
-                      <span
-                        className={`flex items-center gap-1 ${
-                          game.isLive
-                            ? 'text-rose-400 font-semibold animate-pulse'
-                            : game.isFinal
-                            ? 'text-slate-400'
-                            : 'text-slate-500'
-                        }`}
-                      >
-                        {game.isLive && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block" />}
-                        {game.statusText}
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {activeProps.map((prId, gIdx) => {
+              const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
+              const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
+
+              const counts = { away: 0, home: 0 };
+              allUsers.forEach(u => {
+                const p = pickMap[u]?.[prId];
+                if (p?.side === 'away') counts.away++;
+                if (p?.side === 'home') counts.home++;
+              });
+
+              const pinnedPick = pickMap[pinnedUser]?.[prId];
+
+              const sc = propInfo.score;
+              const isPreGame = !sc || sc.state === 'pre';
+              const isLive = sc?.state === 'in';
+              const isFinal = sc?.state === 'post';
+
+              const awayLabel = formatAbbr(propInfo.away);
+              const homeLabel = formatAbbr(propInfo.home);
+
+              return (
+                <tr key={prId} style={{ background: rowBg }}>
+                  <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
+                    {/* Away Team: Keep scores blank until kickoff */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
+                      <span style={{ minWidth: '18px', textAlign: 'right' }}>
+                        {isPreGame ? '' : (sc?.awayScore ?? '')}
                       </span>
-                      <span className="text-[10px] text-slate-400 bg-slate-800/80 px-1.5 py-0.5 rounded font-mono">
-                        📊 {game.analytics}
+                    </div>
+
+                    {/* Home Team: Keep scores blank until kickoff */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
+                      <span style={{ minWidth: '18px', textAlign: 'right' }}>
+                        {isPreGame ? '' : (sc?.homeScore ?? '')}
                       </span>
+                    </div>
+
+                    {/* Clock & Status formatted in device local time */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
+                      <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
+                        {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}
+                      </span>
+                      {(counts.away > 0 || counts.home > 0) ? (
+                        <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span>
+                      ) : (
+                        <span style={{ color: '#64748b', fontSize: '8px' }}>🔒 At kick</span>
+                      )}
                     </div>
                   </td>
 
-                  {/* Pick Columns */}
-                  {data?.members?.map((m) => {
-                    const pick = game.picks?.[m.id];
-                    if (!pick?.pickedTeam) {
-                      return (
-                        <td
-                          key={m.id}
-                          className={`p-3 text-center text-slate-600 ${
-                            m.isUser ? 'sticky left-[145px] sm:left-[180px] z-10 bg-[#101b33] shadow-[1px_0_0_0_#1e293b]' : ''
-                          }`}
-                        >
-                          —
-                        </td>
-                      );
-                    }
+                  {/* Pinned User Column */}
+                  <td className="col-pinned" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: rowBg, textAlign: 'center' }}>
+                    {renderPickPill(pinnedPick, prId)}
+                  </td>
 
-                    const isAway = pick.pickedTeam === game.awayTeam;
-                    const isHome = pick.pickedTeam === game.homeTeam;
-                    const awayScore = game.awayScore ?? 0;
-                    const homeScore = game.homeScore ?? 0;
-                    const isLeading = (isAway && awayScore > homeScore) || (isHome && homeScore > awayScore);
-                    const isTrailing = (isAway && awayScore < homeScore) || (isHome && homeScore < awayScore);
-
-                    // Dynamic Pill Styling
-                    let pillStyle = 'border-slate-700 bg-slate-800/80 text-slate-300';
-                    let icon = null;
-
-                    if (game.isFinal) {
-                      if (isLeading) {
-                        pillStyle = 'border-emerald-500/80 bg-emerald-950/40 text-emerald-300';
-                        icon = <span className="text-emerald-400 text-xs">✓</span>;
-                      } else {
-                        pillStyle = 'border-rose-500/80 bg-rose-950/40 text-rose-300';
-                        icon = <span className="text-rose-400 text-xs">✕</span>;
-                      }
-                    } else if (game.isLive) {
-                      if (isLeading) {
-                        pillStyle = 'border-emerald-500 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-500/50';
-                      } else if (isTrailing) {
-                        pillStyle = 'border-rose-500 bg-rose-950/40 text-rose-200 ring-1 ring-rose-500/50';
-                      } else {
-                        pillStyle = 'border-amber-500 bg-amber-950/40 text-amber-200';
-                      }
-                    }
-
+                  {/* Other Competitors */}
+                  {sortedUnpinnedUsers.map(u => {
+                    const pick = pickMap[u]?.[prId];
                     return (
-                      <td
-                        key={m.id}
-                        className={`p-3 text-center whitespace-nowrap ${
-                          m.isUser ? 'sticky left-[145px] sm:left-[180px] z-10 bg-[#101b33] shadow-[1px_0_0_0_#1e293b]' : ''
-                        }`}
-                      >
-                        <div
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold transition-all shadow-sm ${pillStyle}`}
-                        >
-                          {icon}
-                          <span>{pick.pickedTeam}</span>
-                          <span className="w-4 h-4 rounded-full bg-slate-900/80 flex items-center justify-center text-[10px] text-slate-300 font-mono">
-                            {pick.confidence}
-                          </span>
-                        </div>
+                      <td key={u} className="col-other" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1e293b', textAlign: 'center', verticalAlign: 'middle' }}>
+                        {renderPickPill(pick, prId)}
                       </td>
                     );
                   })}
                 </tr>
+              );
+            })}
+
+            {/* Bottom Row 1: Points Earned */}
+            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px', lineHeight: 1.1 }}>Points Earned</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Finalized Won</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#38bdf8' }}>{pinnedStats.earnedPts}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#38bdf8' }}>{userStats[u]?.earnedPts || 0}</div>
+                </td>
               ))}
+            </tr>
 
-              {/* Four Bottom Summary Rows */}
-              {/* Row 1: Current Points Earned */}
-              <tr className="border-t-2 border-slate-700 bg-[#0b132b]/80 font-semibold text-xs">
-                <td className="sticky left-0 z-10 bg-[#0b132b] p-2.5 text-slate-400 shadow-[1px_0_0_0_#1e293b]">
-                  Current Points Earned
-                </td>
-                {data?.members?.map((m) => (
-                  <td
-                    key={m.id}
-                    className={`p-2.5 text-center font-mono ${
-                      m.isUser ? 'sticky left-[145px] sm:left-[180px] z-10 bg-[#131e38] text-amber-400 shadow-[1px_0_0_0_#1e293b]' : 'text-slate-300'
-                    }`}
-                  >
-                    {summaryStats[m.id]?.earned ?? 0}
+            {/* Bottom Row 2: As It Stands */}
+            <tr style={{ background: '#0f172a' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#a78bfa', fontSize: '11px', lineHeight: 1.1 }}>As It Stands</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Ties = 0 pts</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#a78bfa' }}>{pinnedStats.asItStands}</div>
+                {pinnedStats.liveLeadingPts > 0 && (
+                  <div style={{ fontSize: '8px', color: '#22c55e' }}>+{pinnedStats.liveLeadingPts} live</div>
+                )}
+              </td>
+              {sortedUnpinnedUsers.map(u => {
+                const st = userStats[u] || { asItStands: 0, liveLeadingPts: 0 };
+                return (
+                  <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                    <div style={{ fontWeight: 700, fontSize: '12px', color: '#a78bfa' }}>{st.asItStands}</div>
+                    {st.liveLeadingPts > 0 && (
+                      <div style={{ fontSize: '8px', color: '#22c55e' }}>+{st.liveLeadingPts} live</div>
+                    )}
                   </td>
-                ))}
-              </tr>
+                );
+              })}
+            </tr>
 
-              {/* Row 2: Current Points As-It-Stands */}
-              <tr className="border-t border-slate-800 bg-[#0b132b]/60 font-semibold text-xs">
-                <td className="sticky left-0 z-10 bg-[#0b132b] p-2.5 text-slate-400 shadow-[1px_0_0_0_#1e293b]">
-                  Current (As-It-Stands)
+            {/* Bottom Row 3: Max Possible */}
+            <tr style={{ background: '#0b1120' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#f59e0b', fontSize: '11px', lineHeight: 1.1 }}>Max Possible</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Max Potential</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#f59e0b' }}>{pinnedStats.maxPossible}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#fbbf24' }}>{userStats[u]?.maxPossible || 0}</div>
                 </td>
-                {data?.members?.map((m) => (
-                  <td
-                    key={m.id}
-                    className={`p-2.5 text-center font-mono text-emerald-400 ${
-                      m.isUser ? 'sticky left-[145px] sm:left-[180px] z-10 bg-[#131e38] shadow-[1px_0_0_0_#1e293b]' : ''
-                    }`}
-                  >
-                    {summaryStats[m.id]?.asItStands ?? 0}
-                  </td>
-                ))}
-              </tr>
+              ))}
+            </tr>
 
-              {/* Row 3: Max Points Possible */}
-              <tr className="border-t border-slate-800 bg-[#0b132b]/40 font-semibold text-xs">
-                <td className="sticky left-0 z-10 bg-[#0b132b] p-2.5 text-slate-400 shadow-[1px_0_0_0_#1e293b]">
-                  Max Points Possible
+            {/* Bottom Row 4: Total (incl. Week) */}
+            <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
+                <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
                 </td>
-                {data?.members?.map((m) => (
-                  <td
-                    key={m.id}
-                    className={`p-2.5 text-center font-mono text-sky-400 ${
-                      m.isUser ? 'sticky left-[145px] sm:left-[180px] z-10 bg-[#131e38] shadow-[1px_0_0_0_#1e293b]' : ''
-                    }`}
-                  >
-                    {summaryStats[m.id]?.maxPossible ?? 0}
-                  </td>
-                ))}
-              </tr>
+              ))}
+            </tr>
 
-              {/* Row 4: Total (Including Current Week) */}
-              <tr className="border-t-2 border-slate-700 bg-[#0b132b] font-bold text-xs sm:text-sm">
-                <td className="sticky left-0 z-10 bg-[#0b132b] p-3 text-amber-400 shadow-[1px_0_0_0_#1e293b]">
-                  Total (w/ Current Week)
+            {/* Bottom Row 5: Initial Rank */}
+            <tr style={{ background: '#0f172a' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#94a3b8', fontSize: '11px', lineHeight: 1.1 }}>Initial Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>Entering Wk</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#94a3b8' }}>{initialRanks[pinnedUser] ? `#${initialRanks[pinnedUser]}` : '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0f172a', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#94a3b8' }}>{initialRanks[u] ? `#${initialRanks[u]}` : '—'}</div>
                 </td>
-                {data?.members?.map((m) => (
-                  <td
-                    key={m.id}
-                    className={`p-3 text-center font-mono text-amber-400 ${
-                      m.isUser ? 'sticky left-[145px] sm:left-[180px] z-10 bg-[#131e38] shadow-[1px_0_0_0_#1e293b]' : ''
-                    }`}
-                  >
-                    {summaryStats[m.id]?.totalOverall ?? 0}
-                  </td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
-        </div>
+              ))}
+            </tr>
 
-        {/* Standings Table */}
-        <div className="rounded-lg border border-slate-800 bg-[#0d162a] p-4 shadow-xl">
-          <h2 className="text-base font-bold text-slate-200 mb-3 flex items-center gap-2">
-            <span>🏆</span> League Standings
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs sm:text-sm">
+            {/* Bottom Row 6: Live Rank */}
+            <tr style={{ background: '#0b1120' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '11px', lineHeight: 1.1 }}>Live Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>Overall Now</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#38bdf8' }}>{liveRanks[pinnedUser] ? `#${liveRanks[pinnedUser]}` : '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#38bdf8' }}>{liveRanks[u] ? `#${liveRanks[u]}` : '—'}</div>
+                </td>
+              ))}
+            </tr>
+
+            {/* Bottom Row 7: Weekly Rank */}
+            <tr style={{ background: '#111827', borderBottom: '2px solid #374151' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+                <div style={{ fontWeight: 800, color: '#f472b6', fontSize: '11px', lineHeight: 1.1 }}>Weekly Rank</div>
+                <div style={{ fontSize: '8px', color: '#64748b' }}>This Week</div>
+              </td>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, fontSize: '12px', color: '#f472b6' }}>{weeklyRanks[pinnedUser] ? `#${weeklyRanks[pinnedUser]}` : '—'}</div>
+              </td>
+              {sortedUnpinnedUsers.map(u => (
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <div style={{ fontWeight: 700, fontSize: '11px', color: '#f472b6' }}>{weeklyRanks[u] ? `#${weeklyRanks[u]}` : '—'}</div>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+
+        {/* 3-Column Standings Leaderboard */}
+        <div style={{ padding: '16px 10px 48px 10px', maxWidth: '620px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc' }}>🏆 Leaderboard & Rankings</span>
+            <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>Week {currentWeekNumber}</span>
+          </div>
+
+          <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '8px', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
               <thead>
-                <tr className="border-b border-slate-800 text-slate-400 font-semibold">
-                  <th className="p-2.5">Current Rank</th>
-                  <th className="p-2.5">Initial Rank</th>
-                  <th className="p-2.5">Weekly Rank</th>
-                  <th className="p-2.5">Entry Name</th>
-                  <th className="p-2.5 text-center">Week Points (Live)</th>
-                  <th className="p-2.5 text-center">Max Potential</th>
-                  <th className="p-2.5 text-right">Total Points</th>
+                <tr style={{ background: '#1e293b', borderBottom: '2px solid #374151' }}>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#94a3b8', fontWeight: 700, width: '33.33%', borderRight: '1px solid #1f2937' }}>
+                    Initial Rank
+                  </th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#38bdf8', fontWeight: 700, width: '33.33%', borderRight: '1px solid #1f2937' }}>
+                    Current Rank
+                  </th>
+                  <th style={{ padding: '8px 6px', textAlign: 'left', color: '#f472b6', fontWeight: 700, width: '33.33%' }}>
+                    Weekly Rank
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {standings.map((st) => (
-                  <tr
-                    key={st.id}
-                    className={`hover:bg-slate-800/20 ${
-                      st.isUser ? 'bg-amber-500/10 font-bold text-amber-300' : 'text-slate-300'
-                    }`}
-                  >
-                    <td className="p-2.5 font-mono">#{st.currentRank}</td>
-                    <td className="p-2.5 font-mono text-slate-500">#{st.initialRank}</td>
-                    <td className="p-2.5 font-mono text-slate-400">#{st.weeklyRank}</td>
-                    <td className="p-2.5 flex items-center gap-1.5">
-                      {st.isUser && <span>⭐</span>}
-                      <span>{st.entryName}</span>
-                    </td>
-                    <td className="p-2.5 text-center font-mono">
-                      {st.stats.earned}{' '}
-                      <span className="text-emerald-400 font-normal">({st.stats.asItStands})</span>
-                    </td>
-                    <td className="p-2.5 text-center font-mono text-sky-400">{st.stats.maxPossible}</td>
-                    <td className="p-2.5 text-right font-mono text-amber-400 font-bold">{st.stats.totalOverall}</td>
-                  </tr>
-                ))}
+              <tbody>
+                {allUsers.map((_, idx) => {
+                  const uInit = sortedByInitial[idx];
+                  const uLive = sortedByLive[idx];
+                  const uWeek = sortedByWeekly[idx];
+
+                  const initRank = uInit ? (initialRanks[uInit] || (idx + 1)) : '—';
+                  const liveRank = uLive ? (liveRanks[uLive] || (idx + 1)) : '—';
+                  const weekRank = uWeek ? (weeklyRanks[uWeek] || (idx + 1)) : '—';
+
+                  const rowBg = idx % 2 === 0 ? '#0b1120' : '#0e1626';
+
+                  return (
+                    <tr key={idx} style={{ background: rowBg, borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uInit ? (
+                          <>
+                            <span style={{ color: '#64748b', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {initRank}.
+                            </span>
+                            <span style={{ fontWeight: uInit === pinnedUser ? 800 : 600, color: uInit === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uInit === pinnedUser ? '⭐ ' : ''}{uInit}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uInit]?.initialPoints ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+
+                      <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uLive ? (
+                          <>
+                            <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {liveRank}.
+                            </span>
+                            <span style={{ fontWeight: uLive === pinnedUser ? 800 : 600, color: uLive === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uLive === pinnedUser ? '⭐ ' : ''}{uLive}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uLive]?.totalWithWeek ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+
+                      <td style={{ padding: '6px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {uWeek ? (
+                          <>
+                            <span style={{ color: '#f472b6', fontWeight: 700, fontSize: '10px', marginRight: '4px' }}>
+                              {weekRank}.
+                            </span>
+                            <span style={{ fontWeight: uWeek === pinnedUser ? 800 : 600, color: uWeek === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>
+                              {uWeek === pinnedUser ? '⭐ ' : ''}{uWeek}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>
+                              ({userStats[uWeek]?.asItStands ?? 0})
+                            </span>
+                          </>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
