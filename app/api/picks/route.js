@@ -6,9 +6,9 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard to determine active week & events
+    // 1. Fetch live scoreboard for all FBS games across weeks 1 through 6
     let allEvents = [];
-    let curWeek = 4;
+    let curWeek = 5;
     try {
       const baseSbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300', {
         next: { revalidate: 30 }
@@ -16,14 +16,11 @@ export async function GET() {
       if (baseSbRes.ok) {
         const baseSbData = await baseSbRes.json();
         allEvents = baseSbData.events || [];
-        if (baseSbData.week?.number) {
-          curWeek = baseSbData.week.number;
-        }
+        curWeek = baseSbData.week?.number || 5;
 
-        // Fetch scoreboards for weeks 1 through curWeek + 1 (so Week 5 has matchup times & data)
-        const maxScoreboardWeek = Math.max(curWeek + 1, 5);
+        const maxSbWeek = Math.max(curWeek + 1, 6);
         const weekFetches = [];
-        for (let w = 1; w <= maxScoreboardWeek; w++) {
+        for (let w = 1; w <= maxSbWeek; w++) {
           weekFetches.push(
             fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${w}`, {
               next: { revalidate: w >= curWeek ? 30 : 86400 }
@@ -48,7 +45,7 @@ export async function GET() {
       console.error("Scoreboard fetch error:", e);
     }
 
-    // Process all events
+    // Process scoreboard events
     const parsedEvents = allEvents.map(ev => {
       const comp = ev.competitions?.[0];
       if (!comp) return null;
@@ -114,15 +111,16 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch challenge propositions across all available weeks (including Week 5)
+    // 2. Fetch challenge propositions across all verified primary endpoints
     const propMap = {};
-    const weekPropMap = {}; // { [weekNum]: [propIds] }
+    const week5PropIds = [];
 
-    function registerProp(p, weekNum) {
+    function registerProp(p, explicitWeek = null) {
       if (!p || !p.id) return;
+      const idStr = String(p.id);
       const outcomes = p.possibleOutcomes || p.outcomes || [];
-      const rawAway = outcomes[0]?.abbreviation || outcomes[0]?.shortDisplayName || outcomes[0]?.name || 'Away';
-      const rawHome = outcomes[1]?.abbreviation || outcomes[1]?.shortDisplayName || outcomes[1]?.name || 'Home';
+      const rawAway = outcomes[0]?.shortDisplayName || outcomes[0]?.abbreviation || outcomes[0]?.name || outcomes[0]?.caption || 'Away';
+      const rawHome = outcomes[1]?.shortDisplayName || outcomes[1]?.abbreviation || outcomes[1]?.name || outcomes[1]?.caption || 'Home';
       const outcomeAwayId = outcomes[0]?.id ? String(outcomes[0].id) : null;
       const outcomeHomeId = outcomes[1]?.id ? String(outcomes[1].id) : null;
 
@@ -159,10 +157,10 @@ export async function GET() {
 
       const away = matchedEvent?.awayAbbr || rawAway;
       const home = matchedEvent?.homeAbbr || rawHome;
-      const sp = weekNum || p.scoringPeriodId || p.scoringPeriod || null;
+      const sp = explicitWeek || p.scoringPeriodId || p.scoringPeriod || null;
 
       const propObj = {
-        id: p.id,
+        id: idStr,
         away,
         home,
         title: `${away} @ ${home}`,
@@ -172,49 +170,47 @@ export async function GET() {
         scoringPeriodId: sp
       };
 
-      propMap[p.id] = propObj;
-      if (typeof p.id === 'string' && p.id.length >= 7) {
-        propMap[p.id.slice(0, 7)] = propObj;
+      propMap[idStr] = propObj;
+      if (idStr.length >= 7) {
+        propMap[idStr.slice(0, 7)] = propObj;
       }
 
-      if (sp) {
-        const spNum = Number(sp);
-        if (!weekPropMap[spNum]) weekPropMap[spNum] = [];
-        if (!weekPropMap[spNum].includes(p.id)) {
-          weekPropMap[spNum].push(p.id);
+      if (sp === 5 || sp === '5') {
+        if (!week5PropIds.includes(idStr)) {
+          week5PropIds.push(idStr);
         }
       }
     }
 
-    // Query weeks 1 through curWeek + 1 to discover Week 5
-    const maxWeeksToProbe = Math.max(curWeek + 1, 5);
-    const propFetches = [];
-    for (let w = 1; w <= maxWeeksToProbe; w++) {
-      propFetches.push(
-        fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?scoringPeriodId=${w}&view=chui_pagetype_group_picks`, {
-          next: { revalidate: w >= curWeek ? 60 : 86400 }
-        })
+    // Direct endpoints that supply challenge propositions
+    const propFetches = [
+      fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_ID}`, { next: { revalidate: 120 } })
         .then(r => r.ok ? r.json() : null)
-        .then(data => ({ data, week: w }))
-        .catch(() => ({ data: null, week: w }))
+        .catch(() => null),
+      fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}`, { next: { revalidate: 120 } })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null),
+      fetch(`https://gambit-api.fantasy.espn.com/apis/v1/propositions?challengeId=${CHALLENGE_ID}&limit=250`, { next: { revalidate: 300 } })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+    ];
+
+    for (let w = 1; w <= 6; w++) {
+      propFetches.push(
+        fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_ID}?scoringPeriodId=${w}`, { next: { revalidate: 300 } })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => ({ data, week: w }))
+          .catch(() => null)
       );
     }
 
-    // Also fetch main challenge endpoint
-    propFetches.push(
-      fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_group_picks`, {
-        next: { revalidate: 60 }
-      })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => ({ data, week: null }))
-      .catch(() => ({ data: null, week: null }))
-    );
-
     const propResults = await Promise.all(propFetches);
-    propResults.forEach(({ data, week }) => {
-      if (data?.propositions) {
-        data.propositions.forEach(p => registerProp(p, week));
-      }
+    propResults.forEach(item => {
+      if (!item) return;
+      const data = item.data || item;
+      const week = item.week || null;
+      const list = Array.isArray(data) ? data : (data.propositions || []);
+      list.forEach(p => registerProp(p, week));
     });
 
     // 3. Fetch Group Leaderboard
@@ -295,12 +291,12 @@ export async function GET() {
       pickMap[userName] = {};
 
       picks.forEach(p => {
-        const propId = p.propositionId;
+        const propId = String(p.propositionId || '');
         if (propId && !allPickPropIds.includes(propId)) {
           allPickPropIds.push(propId);
         }
 
-        const propInfo = propMap[propId] || propMap[propId?.slice?.(0, 7)];
+        const propInfo = propMap[propId] || propMap[propId.slice(0, 7)];
         const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || p.outcome?.id || '');
         const clean = rawOutcome.toLowerCase().replace(/[^a-z0-9]/gi, '');
 
@@ -332,29 +328,21 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    // 5. Build weekly blocks including Week 5 when available
+    // 5. Build weekly blocks strictly chunked by 10 games
     const weekBlocks = [];
-    const populatedWeeks = Object.keys(weekPropMap).map(Number).filter(w => weekPropMap[w].length > 0);
-    const maxWeek = Math.max(
-      ...populatedWeeks,
-      Math.ceil(allPickPropIds.length / 10),
-      curWeek
-    );
-
-    for (let w = 1; w <= maxWeek; w++) {
-      if (weekPropMap[w] && weekPropMap[w].length > 0) {
-        weekBlocks.push(weekPropMap[w]);
-      } else {
-        const start = (w - 1) * 10;
-        const slice = allPickPropIds.slice(start, start + 10);
-        if (slice.length > 0) {
-          weekBlocks.push(slice);
-        }
-      }
+    for (let i = 0; i < allPickPropIds.length; i += 10) {
+      weekBlocks.push(allPickPropIds.slice(i, i + 10));
     }
 
-    if (!weekBlocks.length) {
-      weekBlocks.push(allPickPropIds.slice(0, 10));
+    // Append Week 5 propositions if not yet submitted by all entries
+    if (weekBlocks.length < 5) {
+      const candidates = week5PropIds.length >= 10
+        ? week5PropIds
+        : Object.keys(propMap).filter(id => !allPickPropIds.includes(id) && id.length > 7);
+
+      if (candidates.length > 0) {
+        weekBlocks.push(candidates.slice(0, 10));
+      }
     }
 
     return NextResponse.json({
