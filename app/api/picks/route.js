@@ -5,7 +5,7 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch scoreboard across weeks 1 through 6
+    // 1. Fetch live scoreboard across weeks 1 through 6
     let curWeek = 5;
     const eventsByWeek = {};
     const allScoreboardEvents = [];
@@ -120,7 +120,6 @@ export async function GET() {
       return false;
     }
 
-    // Date-based fallback to verify week assignment
     function inferWeekFromDate(dateStr) {
       if (!dateStr) return curWeek;
       try {
@@ -136,7 +135,7 @@ export async function GET() {
       return curWeek;
     }
 
-    // 2. Fetch challenge definitions strictly from college-football-pickem-2026
+    // 2. Fetch propositions strictly from 2026 challenge endpoints
     let chalId = null;
     let challengeProps = [];
     try {
@@ -181,7 +180,6 @@ export async function GET() {
       const outcomeAwayId = outcomes[0]?.id ? String(outcomes[0].id) : null;
       const outcomeHomeId = outcomes[1]?.id ? String(outcomes[1].id) : null;
 
-      // Match against scoreboard
       let matchedEvent = null;
       if (forcedWeek && eventsByWeek[forcedWeek]) {
         for (const ev of eventsByWeek[forcedWeek]) {
@@ -335,10 +333,12 @@ export async function GET() {
       users.push(userName);
       pickMap[userName] = {};
 
-      picks.forEach(p => {
+      picks.forEach((p, idx) => {
         const propId = String(p.propositionId || '');
+        const weekNum = p.scoringPeriodId || p.scoringPeriod || Math.floor(idx / 10) + 1;
+
         if (!propMap[propId]) {
-          registerProp(p.proposition || { id: propId }, p.scoringPeriodId || null);
+          registerProp(p.proposition || { id: propId }, weekNum);
         }
 
         const propInfo = propMap[propId] || propMap[propId.slice(0, 7)];
@@ -373,23 +373,26 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    // 5. Partition by real scoring period (eliminating ghost games)
+    // 5. Partition by week and enforce chronological kickoff ordering
+    const maxWeek = Math.max(curWeek, 5);
     const weekBuckets = {};
-    for (let w = 1; w <= Math.max(curWeek, 5); w++) {
+    for (let w = 1; w <= maxWeek; w++) {
       weekBuckets[w] = [];
     }
 
+    const seenProps = new Set();
     Object.values(propMap).forEach(prop => {
-      if (!prop?.id || prop.id.length < 8) return;
+      if (!prop?.id || seenProps.has(prop.id)) return;
+      seenProps.add(prop.id);
+
       const w = prop.scoringPeriodId || inferWeekFromDate(prop.kickoffDate);
-      if (weekBuckets[w] && !weekBuckets[w].some(existing => existing.id === prop.id)) {
+      if (weekBuckets[w]) {
         weekBuckets[w].push(prop);
       }
     });
 
-    // Sort every week chronologically by kickoff time ascending
     const weekBlocks = [];
-    for (let w = 1; w <= Math.max(curWeek, 5); w++) {
+    for (let w = 1; w <= maxWeek; w++) {
       const block = weekBuckets[w] || [];
       block.sort((a, b) => {
         const tA = a.kickoffTime || 0;
@@ -400,9 +403,7 @@ export async function GET() {
         return (a.title || '').localeCompare(b.title || '');
       });
 
-      if (block.length > 0) {
-        weekBlocks.push(block.map(p => p.id).slice(0, 10));
-      }
+      weekBlocks.push(block.map(p => p.id).slice(0, 10));
     }
 
     const currentWeekIdx = Math.min(curWeek - 1, weekBlocks.length - 1);
