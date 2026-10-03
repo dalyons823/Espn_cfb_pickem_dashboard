@@ -64,6 +64,8 @@ const ABBR_FALLBACKS = {
   'auburn': 'AUB',
   'vanderbilt': 'VAN',
   'texas a&m': 'TAMU',
+  'rutgers': 'RUTG',
+  'indiana': 'IU',
 };
 
 function formatAbbr(name) {
@@ -604,7 +606,7 @@ export default function MatrixDashboard() {
               return (
                 <tr key={prId} style={{ background: rowBg }}>
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team: Keep scores blank if pre-game */}
+                    {/* Away Team: Never show scores before kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -612,7 +614,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Home Team: Keep scores blank if pre-game */}
+                    {/* Home Team: Never show scores before kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -623,7 +625,7 @@ export default function MatrixDashboard() {
                     {/* Clock & Status */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
-                        {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? sc.statusDetail : (propInfo.gameTime || 'Upcoming'))}
+                        {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : (propInfo.gameTime || 'Upcoming'))}
                       </span>
                       {(counts.away > 0 || counts.home > 0) ? (
                         <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span>
