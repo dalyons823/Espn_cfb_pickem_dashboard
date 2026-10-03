@@ -353,7 +353,6 @@ export default function MatrixDashboard() {
           <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pickObj.pts}</span>
         )}
 
-        {/* Bottom-Left Result Badges for Finalized Games */}
         {isFinished && isWinning && (
           <span
             style={{
@@ -549,7 +548,7 @@ export default function MatrixDashboard() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span style={{ fontSize: '9px', color: isOffline ? '#ef4444' : '#64748b', fontWeight: 600, whiteSpace: 'nowrap' }}>
-            {isOffline ? '⚠️ Offline' : timeAgo}
+            {isOffline ? '⚠️️ Offline' : timeAgo}
           </span>
           <button onClick={() => fetchPicks(false)} style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
           <button onClick={exportCSV} style={{ background: '#334155', border: '1px solid #475569', color: '#fff', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>📥</button>
@@ -606,7 +605,7 @@ export default function MatrixDashboard() {
               return (
                 <tr key={prId} style={{ background: rowBg }}>
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team: Never show scores before kickoff */}
+                    {/* Away Team: Never show score before kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -614,7 +613,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Home Team: Never show scores before kickoff */}
+                    {/* Home Team: Never show score before kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
