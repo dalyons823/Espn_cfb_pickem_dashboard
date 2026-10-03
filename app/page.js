@@ -3,15 +3,32 @@
 import { useState, useEffect, useMemo } from 'react';
 
 const ABBR_FALLBACKS = {
+  'alabama': 'BAMA',
+  'mississippi state': 'MSST',
+  'west virginia': 'WVU',
+  'iowa state': 'ISU',
+  'michigan': 'MICH',
+  'minnesota': 'MINN',
+  'ohio state': 'OSU',
+  'iowa': 'IOWA',
+  'florida': 'FLA',
+  'missouri': 'MIZ',
+  'virginia': 'UVA',
+  'florida state': 'FSU',
+  'kentucky': 'UK',
+  'south carolina': 'SC',
+  'byu': 'BYU',
+  'tcu': 'TCU',
+  'baylor': 'BAY',
+  'arizona state': 'ASU',
+  'cincinnati': 'CIN',
+  'arizona': 'ARIZ',
   'boise state': 'BSU',
   'western michigan': 'WMU',
   'michigan state': 'MSU',
   'james madison': 'JMU',
   'old dominion': 'ODU',
   'ole miss': 'MISS',
-  'florida': 'FLA',
-  'michigan': 'MICH',
-  'iowa': 'IOWA',
   'texas': 'TEX',
   'tennessee': 'TENN',
   'nebraska': 'NEB',
@@ -20,18 +37,14 @@ const ABBR_FALLBACKS = {
   'notre dame': 'ND',
   'purdue': 'PUR',
   'utah': 'UTAH',
-  'iowa state': 'ISU',
   'houston': 'HOU',
   'georgia southern': 'GASO',
   'illinois': 'ILL',
-  'ohio state': 'OSU',
   'sam houston': 'SHSU',
   'texas tech': 'TTU',
   'wake forest': 'WAKE',
   'louisville': 'LOU',
-  'west virginia': 'WVU',
   'oklahoma state': 'OKST',
-  'alabama': 'BAMA',
   'lsu': 'LSU',
   'oregon': 'ORE',
   'washington': 'WASH',
@@ -40,7 +53,6 @@ const ABBR_FALLBACKS = {
   'penn state': 'PSU',
   'wisconsin': 'WISC',
   'clemson': 'CLEM',
-  'florida state': 'FSU',
   'miami': 'MIA',
   'north carolina': 'UNC',
   'nc state': 'NCST',
@@ -48,18 +60,9 @@ const ABBR_FALLBACKS = {
   'kansas': 'KU',
   'kansas state': 'KSU',
   'colorado': 'COLO',
-  'arizona': 'ARIZ',
-  'arizona state': 'ASU',
-  'byu': 'BYU',
-  'tcu': 'TCU',
-  'baylor': 'BAY',
   'arkansas': 'ARK',
   'auburn': 'AUB',
-  'mississippi state': 'MSST',
-  'missouri': 'MIZ',
-  'south carolina': 'SC',
-  'kentucky': 'UK',
-  'vanderbilt': 'VANDY',
+  'vanderbilt': 'VAN',
   'texas a&m': 'TAMU',
 };
 
@@ -600,17 +603,21 @@ export default function MatrixDashboard() {
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
-                      <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.awayScore ?? ''}</span>
+                      <span style={{ minWidth: '18px', textAlign: 'right' }}>
+                        {sc && sc.state !== 'pre' && sc.awayScore !== '' ? sc.awayScore : ''}
+                      </span>
                     </div>
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
-                      <span style={{ minWidth: '18px', textAlign: 'right' }}>{sc?.homeScore ?? ''}</span>
+                      <span style={{ minWidth: '18px', textAlign: 'right' }}>
+                        {sc && sc.state !== 'pre' && sc.homeScore !== '' ? sc.homeScore : ''}
+                      </span>
                     </div>
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
-                        {isLive && '🔴 '}{sc?.statusDetail || 'Upcoming'}
+                        {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? sc.statusDetail : (propInfo.gameTime || 'Upcoming'))}
                       </span>
                       {(counts.away > 0 || counts.home > 0) ? (
                         <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span>
