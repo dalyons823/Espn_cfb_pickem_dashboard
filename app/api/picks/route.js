@@ -6,15 +6,15 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 export async function GET() {
   try {
     // 1. Fetch live scoreboard across weeks 1 through 6
-    let allEvents = [];
     let curWeek = 5;
+    const eventsByWeek = {};
+
     try {
       const baseSbRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300', {
         next: { revalidate: 30 }
       });
       if (baseSbRes.ok) {
         const baseSbData = await baseSbRes.json();
-        allEvents = baseSbData.events || [];
         curWeek = baseSbData.week?.number || 5;
 
         const maxSbWeek = Math.max(curWeek + 1, 6);
@@ -25,76 +25,70 @@ export async function GET() {
               next: { revalidate: w >= curWeek ? 30 : 86400 }
             })
             .then(res => res.ok ? res.json() : null)
-            .catch(() => null)
+            .then(data => ({ data, week: w }))
+            .catch(() => ({ data: null, week: w }))
           );
         }
 
-        const pastResults = await Promise.all(weekFetches);
-        const seenIds = new Set(allEvents.map(e => e.id));
-        pastResults.forEach(data => {
-          (data?.events || []).forEach(ev => {
-            if (!seenIds.has(ev.id)) {
-              seenIds.add(ev.id);
-              allEvents.push(ev);
+        const sbResults = await Promise.all(weekFetches);
+        sbResults.forEach(({ data, week }) => {
+          if (!data?.events) return;
+          eventsByWeek[week] = data.events.map(ev => {
+            const comp = ev.competitions?.[0];
+            if (!comp) return null;
+            const away = comp.competitors?.find(c => c.homeAway === 'away');
+            const home = comp.competitors?.find(c => c.homeAway === 'home');
+
+            const state = ev.status?.type?.state || 'pre';
+            const isPre = state === 'pre';
+
+            const aScore = !isPre && away?.score !== undefined && away?.score !== '' ? parseInt(away.score, 10) : null;
+            const hScore = !isPre && home?.score !== undefined && home?.score !== '' ? parseInt(home.score, 10) : null;
+
+            let leader = null;
+            if (!isPre && aScore !== null && hScore !== null) {
+              if (aScore > hScore) leader = 'away';
+              else if (hScore > aScore) leader = 'home';
+              else leader = 'tie';
             }
-          });
+
+            const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
+            const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
+
+            const collectNames = (teamObj) => {
+              if (!teamObj) return [];
+              return [
+                teamObj.abbreviation,
+                teamObj.shortDisplayName,
+                teamObj.displayName,
+                teamObj.name,
+                teamObj.location,
+                teamObj.nickname
+              ].filter(Boolean);
+            };
+
+            return {
+              date: ev.date || comp.date || null,
+              awayAbbr,
+              homeAbbr,
+              awayNames: collectNames(away?.team),
+              homeNames: collectNames(home?.team),
+              scoreInfo: {
+                awayScore: !isPre && aScore !== null ? String(aScore) : '',
+                homeScore: !isPre && hScore !== null ? String(hScore) : '',
+                statusDetail: ev.status?.type?.shortDetail || '',
+                state,
+                leader,
+                awayAbbr,
+                homeAbbr
+              }
+            };
+          }).filter(Boolean);
         });
       }
     } catch (e) {
       console.error("Scoreboard fetch error:", e);
     }
-
-    const parsedEvents = allEvents.map(ev => {
-      const comp = ev.competitions?.[0];
-      if (!comp) return null;
-      const away = comp.competitors?.find(c => c.homeAway === 'away');
-      const home = comp.competitors?.find(c => c.homeAway === 'home');
-
-      const state = ev.status?.type?.state || 'pre';
-      const isPre = state === 'pre';
-
-      const aScore = !isPre && away?.score !== undefined && away?.score !== '' ? parseInt(away.score, 10) : null;
-      const hScore = !isPre && home?.score !== undefined && home?.score !== '' ? parseInt(home.score, 10) : null;
-
-      let leader = null;
-      if (!isPre && aScore !== null && hScore !== null) {
-        if (aScore > hScore) leader = 'away';
-        else if (hScore > aScore) leader = 'home';
-        else leader = 'tie';
-      }
-
-      const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
-      const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
-
-      const collectNames = (teamObj) => {
-        if (!teamObj) return [];
-        return [
-          teamObj.abbreviation,
-          teamObj.shortDisplayName,
-          teamObj.displayName,
-          teamObj.name,
-          teamObj.location,
-          teamObj.nickname
-        ].filter(Boolean);
-      };
-
-      return {
-        date: ev.date || comp.date || null,
-        awayAbbr,
-        homeAbbr,
-        awayNames: collectNames(away?.team),
-        homeNames: collectNames(home?.team),
-        scoreInfo: {
-          awayScore: !isPre && aScore !== null ? String(aScore) : '',
-          homeScore: !isPre && hScore !== null ? String(hScore) : '',
-          statusDetail: ev.status?.type?.shortDetail || '',
-          state,
-          leader,
-          awayAbbr,
-          homeAbbr
-        }
-      };
-    }).filter(Boolean);
 
     function normalize(str) {
       return String(str || '')
@@ -122,35 +116,34 @@ export async function GET() {
       return false;
     }
 
-    // 2. Fetch official challenge definitions and dynamic challenge ID
-    let realChalId = null;
+    // 2. Fetch challenge metadata and propositions strictly from college-football-pickem-2026
+    let chalId = null;
     let challengeProps = [];
     try {
-      const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}`, {
+      const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_group_picks`, {
         next: { revalidate: 60 }
       });
       if (chalRes.ok) {
         const chalData = await chalRes.json();
-        realChalId = chalData.id;
+        chalId = chalData.id;
         challengeProps = chalData.propositions || [];
       }
     } catch (e) {}
 
-    // Fetch official proposition catalog for the real 2026 challenge ID
-    let allChallengeProps = [...challengeProps];
-    if (realChalId) {
+    let allCatalogProps = [...challengeProps];
+    if (chalId) {
       try {
-        const propsRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/propositions?challengeId=${realChalId}&limit=500`, {
+        const pRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/propositions?challengeId=${chalId}&limit=500`, {
           next: { revalidate: 180 }
         });
-        if (propsRes.ok) {
-          const propsData = await propsRes.json();
-          const pList = Array.isArray(propsData) ? propsData : (propsData.propositions || []);
-          const seen = new Set(allChallengeProps.map(p => String(p.id)));
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          const pList = Array.isArray(pData) ? pData : (pData.propositions || []);
+          const seen = new Set(allCatalogProps.map(p => String(p.id)));
           pList.forEach(p => {
             if (!seen.has(String(p.id))) {
               seen.add(String(p.id));
-              allChallengeProps.push(p);
+              allCatalogProps.push(p);
             }
           });
         }
@@ -158,8 +151,9 @@ export async function GET() {
     }
 
     const propMap = {};
+    const weekPropMap = {};
 
-    allChallengeProps.forEach(p => {
+    function registerProp(p, explicitWeek = null) {
       if (!p || !p.id) return;
       const idStr = String(p.id);
       const outcomes = p.possibleOutcomes || p.outcomes || [];
@@ -168,8 +162,13 @@ export async function GET() {
       const outcomeAwayId = outcomes[0]?.id ? String(outcomes[0].id) : null;
       const outcomeHomeId = outcomes[1]?.id ? String(outcomes[1].id) : null;
 
+      const sp = explicitWeek || p.scoringPeriodId || p.scoringPeriod || curWeek;
+      const spNum = Number(sp);
+
+      // Scoreboard match strictly constrained to the same week
+      const targetEvents = eventsByWeek[spNum] || [];
       let matchedEvent = null;
-      for (const ev of parsedEvents) {
+      for (const ev of targetEvents) {
         const awayMatches = teamMatches(rawAway, ev.awayNames) || teamMatches(rawAway, ev.homeNames);
         const homeMatches = teamMatches(rawHome, ev.homeNames) || teamMatches(rawHome, ev.awayNames);
         if (awayMatches && homeMatches) {
@@ -179,7 +178,6 @@ export async function GET() {
       }
 
       let score = matchedEvent?.scoreInfo || null;
-
       if (!score && outcomes.length === 2) {
         let winner = null;
         if (outcomes[0]?.winner || (p.correctOutcomeId && String(p.correctOutcomeId) === outcomeAwayId)) {
@@ -205,16 +203,9 @@ export async function GET() {
 
       const eventDate = matchedEvent?.date || p.date || p.startTime || p.lockDate;
       let kickoffTime = 0;
-      let gameTime = '';
       if (eventDate) {
         try {
-          const d = new Date(eventDate);
-          kickoffTime = d.getTime();
-          gameTime = d.toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            timeZoneName: 'short'
-          });
+          kickoffTime = new Date(eventDate).getTime();
         } catch (e) {}
       }
 
@@ -226,16 +217,23 @@ export async function GET() {
         score,
         outcomeAwayId,
         outcomeHomeId,
-        scoringPeriodId: p.scoringPeriodId || p.scoringPeriod || null,
-        kickoffTime,
-        gameTime
+        scoringPeriodId: spNum,
+        kickoffDate: eventDate || null,
+        kickoffTime
       };
 
       propMap[idStr] = propObj;
       if (idStr.length >= 7) {
         propMap[idStr.slice(0, 7)] = propObj;
       }
-    });
+
+      if (!weekPropMap[spNum]) weekPropMap[spNum] = [];
+      if (!weekPropMap[spNum].some(item => item.id === idStr)) {
+        weekPropMap[spNum].push(propObj);
+      }
+    }
+
+    allCatalogProps.forEach(p => registerProp(p));
 
     // 3. Fetch Group Leaderboard
     const groupRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`, {
@@ -250,7 +248,6 @@ export async function GET() {
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
-    const allPickPropIds = [];
     const userYearlyScores = {};
     const userPeriodScores = {};
 
@@ -316,8 +313,14 @@ export async function GET() {
 
       picks.forEach(p => {
         const propId = String(p.propositionId || '');
-        if (propId && !allPickPropIds.includes(propId)) {
-          allPickPropIds.push(propId);
+        const sp = p.scoringPeriodId || p.scoringPeriod || propMap[propId]?.scoringPeriodId;
+        if (sp && propId) {
+          const spNum = Number(sp);
+          if (!weekPropMap[spNum]) weekPropMap[spNum] = [];
+          if (!weekPropMap[spNum].some(item => item.id === propId)) {
+            const registered = propMap[propId] || { id: propId, kickoffTime: 0, title: '' };
+            weekPropMap[spNum].push(registered);
+          }
         }
 
         const propInfo = propMap[propId] || propMap[propId.slice(0, 7)];
@@ -352,44 +355,31 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    // 5. Partition propositions into 10-game weekly blocks
+    // 5. Build weekly blocks sorted chronologically by kickoff time
+    const maxWeek = Math.max(curWeek, 5, ...Object.keys(weekPropMap).map(Number));
     const weekBlocks = [];
-    for (let i = 0; i < allPickPropIds.length; i += 10) {
-      weekBlocks.push(allPickPropIds.slice(i, i + 10));
-    }
 
-    // If the active week has fewer than 10 games from submitted picks, append from active challenge props
-    if (challengeProps.length > 0) {
-      const activeChalIds = challengeProps.map(p => String(p.id));
-      if (weekBlocks.length < curWeek) {
-        weekBlocks.push(activeChalIds.slice(0, 10));
-      } else {
-        const lastBlock = weekBlocks[weekBlocks.length - 1];
-        if (lastBlock.length < 10) {
-          activeChalIds.forEach(id => {
-            if (!lastBlock.includes(id) && lastBlock.length < 10) {
-              lastBlock.push(id);
-            }
-          });
-        }
+    for (let w = 1; w <= maxWeek; w++) {
+      const weekProps = weekPropMap[w] || [];
+
+      // Sort: 12:00 PM -> 3:30 PM -> 4:15 PM -> 7:30 PM -> 10:30 PM
+      weekProps.sort((a, b) => {
+        const tA = a.kickoffTime || 0;
+        const tB = b.kickoffTime || 0;
+        if (tA && tB && tA !== tB) return tA - tB;
+        if (tA && !tB) return -1;
+        if (!tA && tB) return 1;
+        return (a.title || '').localeCompare(b.title || '');
+      });
+
+      if (weekProps.length > 0) {
+        weekBlocks.push(weekProps.map(p => p.id).slice(0, 10));
       }
     }
 
     if (!weekBlocks.length) {
       weekBlocks.push([]);
     }
-
-    // 6. Strict Chronological Kickoff Sorting for each week
-    weekBlocks.forEach(block => {
-      block.sort((a, b) => {
-        const tA = propMap[a]?.kickoffTime || 0;
-        const tB = propMap[b]?.kickoffTime || 0;
-        if (tA && tB && tA !== tB) return tA - tB;
-        if (tA && !tB) return -1;
-        if (!tA && tB) return 1;
-        return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
-      });
-    });
 
     const currentWeekIdx = Math.min(curWeek - 1, weekBlocks.length - 1);
 
