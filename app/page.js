@@ -366,6 +366,7 @@ export default function MatrixDashboard() {
           <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pickObj.pts}</span>
         )}
 
+        {/* Bottom-Left Result Badges for Finalized Games */}
         {isFinished && isWinning && (
           <span
             style={{
@@ -618,7 +619,7 @@ export default function MatrixDashboard() {
               return (
                 <tr key={prId} style={{ background: rowBg }}>
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team */}
+                    {/* Away Team: Keep scores blank until kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -626,7 +627,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Home Team */}
+                    {/* Home Team: Keep scores blank until kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -634,7 +635,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Status & Local Device Kickoff Time */}
+                    {/* Clock & Status formatted in device local time */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}
