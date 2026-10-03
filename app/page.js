@@ -301,10 +301,9 @@ export default function MatrixDashboard() {
     );
   }
 
-  // Pick Pill with Winning/Losing Border and Bottom-Left Result Badge
   const renderPickPill = (pickObj, prId) => {
     const team = resolveTeamName(pickObj, prId);
-    if (!team || team === '—') {
+    if (!pickObj || !pickObj.side || team === '—') {
       return <span style={{ color: '#475569' }}>—</span>;
     }
 
@@ -348,7 +347,6 @@ export default function MatrixDashboard() {
           <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pickObj.pts}</span>
         )}
 
-        {/* Bottom-Left Result Badge */}
         {isFinished && isWinning && (
           <span
             style={{
