@@ -116,24 +116,24 @@ export async function GET() {
       return false;
     }
 
-    // 2. Fetch challenge metadata and propositions strictly from college-football-pickem-2026
-    let chalId = null;
+    // 2. Fetch challenge metadata and propositions ONLY from college-football-pickem-2026
     let challengeProps = [];
+    let realChalId = null;
     try {
-      const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_group_picks`, {
+      const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}`, {
         next: { revalidate: 60 }
       });
       if (chalRes.ok) {
         const chalData = await chalRes.json();
-        chalId = chalData.id;
+        realChalId = chalData.id;
         challengeProps = chalData.propositions || [];
       }
     } catch (e) {}
 
     let allCatalogProps = [...challengeProps];
-    if (chalId) {
+    if (realChalId) {
       try {
-        const pRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/propositions?challengeId=${chalId}&limit=500`, {
+        const pRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/propositions?challengeId=${realChalId}&limit=500`, {
           next: { revalidate: 180 }
         });
         if (pRes.ok) {
@@ -248,6 +248,7 @@ export async function GET() {
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
+    const allPickPropIds = [];
     const userYearlyScores = {};
     const userPeriodScores = {};
 
@@ -313,14 +314,8 @@ export async function GET() {
 
       picks.forEach(p => {
         const propId = String(p.propositionId || '');
-        const sp = p.scoringPeriodId || p.scoringPeriod || propMap[propId]?.scoringPeriodId;
-        if (sp && propId) {
-          const spNum = Number(sp);
-          if (!weekPropMap[spNum]) weekPropMap[spNum] = [];
-          if (!weekPropMap[spNum].some(item => item.id === propId)) {
-            const registered = propMap[propId] || { id: propId, kickoffTime: 0, title: '' };
-            weekPropMap[spNum].push(registered);
-          }
+        if (propId && !allPickPropIds.includes(propId)) {
+          allPickPropIds.push(propId);
         }
 
         const propInfo = propMap[propId] || propMap[propId.slice(0, 7)];
@@ -355,30 +350,47 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    // 5. Build weekly blocks sorted chronologically by kickoff time
+    // 5. Build weekly blocks cleanly
     const maxWeek = Math.max(curWeek, 5, ...Object.keys(weekPropMap).map(Number));
     const weekBlocks = [];
 
     for (let w = 1; w <= maxWeek; w++) {
-      const weekProps = weekPropMap[w] || [];
+      let blockIds = [];
+      if (weekPropMap[w] && weekPropMap[w].length >= 10) {
+        blockIds = weekPropMap[w].map(p => p.id);
+      } else {
+        const start = (w - 1) * 10;
+        blockIds = allPickPropIds.slice(start, start + 10);
 
-      // Sort: 12:00 PM -> 3:30 PM -> 4:15 PM -> 7:30 PM -> 10:30 PM
-      weekProps.sort((a, b) => {
-        const tA = a.kickoffTime || 0;
-        const tB = b.kickoffTime || 0;
+        if (w === curWeek && challengeProps.length > 0) {
+          challengeProps.forEach(p => {
+            const pId = String(p.id);
+            if (!blockIds.includes(pId) && blockIds.length < 10) {
+              blockIds.push(pId);
+            }
+          });
+        }
+      }
+
+      // Sort games in this week strictly by kickoff time ascending
+      blockIds.sort((a, b) => {
+        const tA = propMap[a]?.kickoffTime || 0;
+        const tB = propMap[b]?.kickoffTime || 0;
         if (tA && tB && tA !== tB) return tA - tB;
         if (tA && !tB) return -1;
         if (!tA && tB) return 1;
-        return (a.title || '').localeCompare(b.title || '');
+        return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
       });
 
-      if (weekProps.length > 0) {
-        weekBlocks.push(weekProps.map(p => p.id).slice(0, 10));
+      if (blockIds.length > 0) {
+        weekBlocks.push(blockIds.slice(0, 10));
       }
     }
 
     if (!weekBlocks.length) {
-      weekBlocks.push([]);
+      for (let i = 0; i < allPickPropIds.length; i += 10) {
+        weekBlocks.push(allPickPropIds.slice(i, i + 10));
+      }
     }
 
     const currentWeekIdx = Math.min(curWeek - 1, weekBlocks.length - 1);
