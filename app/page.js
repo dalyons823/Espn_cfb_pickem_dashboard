@@ -23,10 +23,6 @@ const ABBR_FALLBACKS = {
   'arizona state': 'ASU',
   'cincinnati': 'CIN',
   'arizona': 'ARIZ',
-  'clemson': 'CLEM',
-  'miami': 'MIA',
-  'indiana': 'IU',
-  'rutgers': 'RUTG',
   'texas': 'TEX',
   'oklahoma': 'OU',
   'georgia': 'UGA',
@@ -134,7 +130,7 @@ export default function MatrixDashboard() {
   });
   const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
 
-  // Format kickoff in user's device local timezone
+  // Format kickoff directly in the device's local timezone
   const formatDeviceTime = (propInfo) => {
     const dateVal = propInfo?.kickoffDate || propInfo?.kickoffTime;
     if (!dateVal) return 'Upcoming';
@@ -386,7 +382,7 @@ export default function MatrixDashboard() {
       ['"Points Earned (Finalized)"', ...exportUsers.map(u => `"${userStats[u]?.earnedPts || 0}"`)],
       ['"As It Stands (Ties=0)"', ...exportUsers.map(u => `"${userStats[u]?.asItStands || 0}"`)],
       ['"Max Points Possible"', ...exportUsers.map(u => `"${userStats[u]?.maxPossible || 0}"`)],
-      ['"Total (incl. Week)"', ...exportUsers.map(u => `"${userStats[u]?.totalWithWeek || 0}"`)],
+      ['"Total (incl. Week)"', ...exportUsers.map(u => `"${userStats[u]?.totalWithWeek || 0}" daylight`)],
       ['"Initial Rank"', ...exportUsers.map(u => `"${initialRanks[u] || '—'}"`)],
       ['"Live Rank"', ...exportUsers.map(u => `"${liveRanks[u] || '—'}"`)],
       ['"Weekly Rank"', ...exportUsers.map(u => `"${weeklyRanks[u] || '—'}"`)]
@@ -561,7 +557,7 @@ export default function MatrixDashboard() {
               return (
                 <tr key={prId} style={{ background: rowBg }}>
                   <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: rowBg }}>
-                    {/* Away Team: Scores blank if unstarted */}
+                    {/* Away Team: Keep scores blank until kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>{awayLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -569,7 +565,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Home Team: Scores blank if unstarted */}
+                    {/* Home Team: Keep scores blank until kickoff */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '82px' }}>@{homeLabel}</span>
                       <span style={{ minWidth: '18px', textAlign: 'right' }}>
@@ -577,7 +573,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Clock & Status formatted in user's device local timezone */}
+                    {/* Status & Local Device Kickoff Time */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}
@@ -671,11 +667,11 @@ export default function MatrixDashboard() {
                 <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
                 <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
               </td>
-              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
-                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
                 </td>
               ))}
