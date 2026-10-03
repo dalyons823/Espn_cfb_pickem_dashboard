@@ -5,7 +5,7 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch live scoreboard across weeks 1 through 6
+    // 1. Fetch live scoreboard partitioned by week
     let curWeek = 5;
     const eventsByWeek = {};
     const allScoreboardEvents = [];
@@ -120,10 +120,24 @@ export async function GET() {
       return false;
     }
 
-    // 2. Fetch propositions strictly from official 2026 challenge scoring periods
-    const allCatalogProps = [];
-    const weekPropFetches = [];
+    // 2. Fetch challenge definitions strictly from college-football-pickem-2026
+    let allCatalogProps = [];
 
+    // Fetch primary challenge
+    try {
+      const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}`, {
+        next: { revalidate: 60 }
+      });
+      if (chalRes.ok) {
+        const chalData = await chalRes.json();
+        if (chalData.propositions) {
+          allCatalogProps.push(...chalData.propositions);
+        }
+      }
+    } catch (e) {}
+
+    // Fetch all scoring periods in parallel
+    const weekPropFetches = [];
     for (let w = 1; w <= Math.max(curWeek + 1, 6); w++) {
       weekPropFetches.push(
         fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?scoringPeriodId=${w}`, {
@@ -145,13 +159,14 @@ export async function GET() {
       });
     });
 
+    // Fetch group data
     try {
-      const chalRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_group_picks`, {
+      const gRes = await fetch(`https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}`, {
         next: { revalidate: 60 }
       });
-      if (chalRes.ok) {
-        const chalData = await chalRes.json();
-        if (chalData.propositions) allCatalogProps.push(...chalData.propositions);
+      if (gRes.ok) {
+        const gData = await gRes.json();
+        if (gData.propositions) allCatalogProps.push(...gData.propositions);
       }
     } catch (e) {}
 
@@ -177,6 +192,7 @@ export async function GET() {
       const sp = forcedWeek || p._forcedWeek || p.scoringPeriodId || p.scoringPeriod || curWeek;
       const spNum = Number(sp);
 
+      // Match against the scoreboard events for this specific week
       let matchedEvent = null;
       const weekEvents = eventsByWeek[spNum] || [];
       for (const ev of weekEvents) {
@@ -185,17 +201,6 @@ export async function GET() {
         if (awayMatches && homeMatches) {
           matchedEvent = ev;
           break;
-        }
-      }
-
-      if (!matchedEvent) {
-        for (const ev of allScoreboardEvents) {
-          const awayMatches = teamMatches(rawAway, ev.awayNames) || teamMatches(rawAway, ev.homeNames);
-          const homeMatches = teamMatches(rawHome, ev.homeNames) || teamMatches(rawHome, ev.awayNames);
-          if (awayMatches && homeMatches) {
-            matchedEvent = ev;
-            break;
-          }
         }
       }
 
@@ -387,7 +392,7 @@ export async function GET() {
       weekMap[w] = [];
     }
 
-    // Populate weekMap directly from ESPN scoring periods
+    // Add catalog props to their respective week
     allCatalogProps.forEach(p => {
       const sp = p._forcedWeek || p.scoringPeriodId || p.scoringPeriod;
       if (sp) {
@@ -399,7 +404,7 @@ export async function GET() {
       }
     });
 
-    // Merge group picked games to ensure all active contest matchups are included
+    // Add picks propositions to ensure all picked matchups are included
     settled.forEach(({ picks }) => {
       picks.forEach((p, idx) => {
         const propId = String(p.propositionId || '');
