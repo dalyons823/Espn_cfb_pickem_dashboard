@@ -161,15 +161,18 @@ export default function MatrixDashboard() {
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
 
   const resolveTeamName = (pickObj, prId) => {
-    const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home' };
+    const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { away: 'Away', home: 'Home' };
     if (!pickObj || !pickObj.side) return '—';
     const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
     return formatAbbr(raw);
   };
 
-  const hasLiveGames = activeProps.some(prId => propMap[prId]?.score?.state === 'in');
+  const hasLiveGames = activeProps.some(prId => {
+    const st = propMap[prId]?.score?.state || propMap[String(prId).slice(0, 7)]?.score?.state;
+    return st === 'in';
+  });
   const hasUpcomingGames = activeProps.some(prId => {
-    const st = propMap[prId]?.score?.state;
+    const st = propMap[prId]?.score?.state || propMap[String(prId).slice(0, 7)]?.score?.state;
     return !st || st === 'pre';
   });
   const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
@@ -187,7 +190,7 @@ export default function MatrixDashboard() {
         const p = pickMap[u]?.[prId];
         const pts = p?.pts || 0;
 
-        const propInfo = propMap[prId] || propMap[prId.slice(0, 7)];
+        const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)];
         const sc = propInfo?.score;
         const isFinal = sc?.state === 'post';
         const isLive = sc?.state === 'in';
@@ -257,7 +260,6 @@ export default function MatrixDashboard() {
     };
   }, [allUsers, userStats, selectedWeek]);
 
-  // Standings Lists Sorted for Each Column
   const sortedByInitial = useMemo(() => {
     return [...allUsers].sort((a, b) => (userStats[b]?.initialPoints ?? 0) - (userStats[a]?.initialPoints ?? 0));
   }, [allUsers, userStats]);
@@ -305,7 +307,7 @@ export default function MatrixDashboard() {
       return { background: '#1e293b', color: '#64748b', border: '1px solid #334155' };
     }
 
-    const propInfo = propMap[prId] || propMap[prId.slice(0, 7)];
+    const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)];
     const sc = propInfo?.score;
     const isFinished = sc?.state === 'post';
     const isLive = sc?.state === 'in';
@@ -347,7 +349,7 @@ export default function MatrixDashboard() {
     let csv = 'Matchup,' + exportUsers.map(u => `"${u.replace(/"/g, '""')} (${userStats[u]?.totalWithWeek || 0} pts)"`).join(',') + '\n';
 
     activeProps.forEach((prId, gIdx) => {
-      const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { title: `Game #${gIdx + 1}` };
+      const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { title: `Game #${gIdx + 1}` };
       const row = [`"${propInfo.title.replace(/"/g, '""')}"`];
 
       exportUsers.forEach(u => {
@@ -494,7 +496,7 @@ export default function MatrixDashboard() {
         </div>
       </div>
 
-      {/* Scrollable Viewport (Matrix + Standings Table) */}
+      {/* Main Table Viewport */}
       <div style={{ flex: 1, overflow: 'auto', background: '#0b1120' }}>
         <table className="matrix-table" style={{ fontSize: '12px', textAlign: 'left' }}>
           <thead>
@@ -521,7 +523,7 @@ export default function MatrixDashboard() {
           </thead>
           <tbody>
             {activeProps.map((prId, gIdx) => {
-              const propInfo = propMap[prId] || propMap[prId.slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
+              const propInfo = propMap[prId] || propMap[String(prId)] || propMap[String(prId).slice(0, 7)] || { away: 'Away', home: 'Home', title: 'Matchup', score: null };
               const rowBg = gIdx % 2 === 0 ? '#0b1120' : '#0e1626';
 
               const counts = { away: 0, home: 0 };
@@ -611,7 +613,7 @@ export default function MatrixDashboard() {
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#38bdf8' }}>{pinnedStats.earnedPts}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
-                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: '#38bdf8' }}>{userStats[u]?.earnedPts || 0}</div>
                 </td>
               ))}
@@ -660,15 +662,15 @@ export default function MatrixDashboard() {
 
             {/* Bottom Row 4: Total (incl. Week) */}
             <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
-              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
                 <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
                 <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
               </td>
-              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '1px solid #1f2937', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
+              <td className="col-pinned" style={{ padding: '6px 4px', background: '#1e293b', borderBottom: '2px solid #374151', borderRight: '2px solid #f59e0b', textAlign: 'center' }}>
                 <div style={{ fontWeight: 800, fontSize: '13px', color: '#34d399' }}>{pinnedStats.totalWithWeek}</div>
               </td>
               {sortedUnpinnedUsers.map(u => (
-                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937', textAlign: 'center', verticalAlign: 'middle' }}>
+                <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1e2937', textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: '#34d399' }}>{userStats[u]?.totalWithWeek || 0}</div>
                 </td>
               ))}
@@ -724,7 +726,7 @@ export default function MatrixDashboard() {
           </tbody>
         </table>
 
-        {/* 3-Column Standings Table */}
+        {/* 3-Column Standings Leaderboard */}
         <div style={{ padding: '16px 10px 48px 10px', maxWidth: '620px', margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc' }}>🏆 Leaderboard & Rankings</span>
@@ -760,7 +762,6 @@ export default function MatrixDashboard() {
 
                   return (
                     <tr key={idx} style={{ background: rowBg, borderBottom: '1px solid #1e293b' }}>
-                      {/* Column 1: Initial Rank */}
                       <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {uInit ? (
                           <>
@@ -777,7 +778,6 @@ export default function MatrixDashboard() {
                         ) : '—'}
                       </td>
 
-                      {/* Column 2: Current Rank */}
                       <td style={{ padding: '6px 6px', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {uLive ? (
                           <>
@@ -794,7 +794,6 @@ export default function MatrixDashboard() {
                         ) : '—'}
                       </td>
 
-                      {/* Column 3: Weekly Rank */}
                       <td style={{ padding: '6px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {uWeek ? (
                           <>
