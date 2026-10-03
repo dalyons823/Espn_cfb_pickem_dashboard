@@ -182,7 +182,7 @@ export default function MatrixDashboard() {
   });
   const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
 
-  // Format kickoff in user's device local timezone
+  // Format kickoff directly in the device's local timezone
   const formatDeviceTime = (propInfo) => {
     const dateVal = propInfo?.kickoffDate || propInfo?.kickoffTime;
     if (!dateVal) return 'Upcoming';
@@ -366,7 +366,6 @@ export default function MatrixDashboard() {
           <span className="badge-pts" style={{ background: 'rgba(255,255,255,0.22)' }}>{pickObj.pts}</span>
         )}
 
-        {/* Bottom-Left Result Badges for Finalized Games */}
         {isFinished && isWinning && (
           <span
             style={{
@@ -440,7 +439,7 @@ export default function MatrixDashboard() {
       ['"Max Points Possible"', ...exportUsers.map(u => `"${userStats[u]?.maxPossible || 0}"`)],
       ['"Total (incl. Week)"', ...exportUsers.map(u => `"${userStats[u]?.totalWithWeek || 0}"`)],
       ['"Initial Rank"', ...exportUsers.map(u => `"${initialRanks[u] || '—'}"`)],
-      ['"Live Rank"', ...exportUsers.map(u => `"${liveRanks[u] || '—'}"`)],
+      ['"Live Rank"', ...exportUsers.map(u => `"${liveRanks[u] || '—'}" daylight`)],
       ['"Weekly Rank"', ...exportUsers.map(u => `"${weeklyRanks[u] || '—'}"`)]
     ];
 
@@ -635,7 +634,7 @@ export default function MatrixDashboard() {
                       </span>
                     </div>
 
-                    {/* Clock & Status formatted in device local time */}
+                    {/* Status & Local Device Kickoff Time */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
                       <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
                         {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}
@@ -725,7 +724,7 @@ export default function MatrixDashboard() {
 
             {/* Bottom Row 4: Total (incl. Week) */}
             <tr style={{ background: '#111827', borderTop: '2px solid #374151' }}>
-              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937' }}>
+              <td className="col-match" style={{ padding: '6px 8px', background: '#111827', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937' }}>
                 <div style={{ fontWeight: 800, color: '#34d399', fontSize: '11px', lineHeight: 1.1 }}>Total (incl. Wk)</div>
                 <div style={{ fontSize: '8px', color: '#94a3b8' }}>Season Standings</div>
               </td>
