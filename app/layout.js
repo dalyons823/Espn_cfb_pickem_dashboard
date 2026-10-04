@@ -1,3 +1,5 @@
+import { Analytics } from '@vercel/analytics/next';
+
 export const metadata = {
   title: "CFB Pick'em Matrix",
   description: "Live sportsbook-style pick'em matrix for college football",
@@ -9,6 +11,7 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body style={{ margin: 0, padding: 0, background: "#0b1120", color: "#f8fafc", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
         {children}
+        <Analytics />
       </body>
     </html>
   );
