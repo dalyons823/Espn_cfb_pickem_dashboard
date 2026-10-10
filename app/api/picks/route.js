@@ -20,7 +20,7 @@ export async function GET() {
       
       const allProps = chalData.propositions || [];
       
-      // THE MAGIC FILTER: Extract only the active week's Confidence Format (ID 2) games
+      // Filter exclusively for active week Confidence format games (ID 2)
       activeProps = allProps.filter(p => {
         const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
         if (Number(spId) !== Number(activeWeek)) return false;
@@ -32,7 +32,7 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) for the active week
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with team logos
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
@@ -62,6 +62,8 @@ export async function GET() {
 
           const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
           const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
+          const awayLogo = away?.team?.logo || away?.team?.logos?.[0]?.href || '';
+          const homeLogo = home?.team?.logo || home?.team?.logos?.[0]?.href || '';
 
           const oddsObj = comp.odds?.[0] || null;
           const lineDetails = oddsObj?.details || '';
@@ -83,6 +85,8 @@ export async function GET() {
             date: ev.date || comp.date || null,
             awayAbbr,
             homeAbbr,
+            awayLogo,
+            homeLogo,
             lineDetails,
             overUnder,
             awayNames: collectNames(away?.team),
@@ -114,7 +118,7 @@ export async function GET() {
       return false;
     }
 
-    // 3. Register authentic propositions and map Vegas odds
+    // 3. Register propositions, logos, and Vegas lines
     const propMap = {};
     const contestPropIds = [];
 
@@ -161,6 +165,8 @@ export async function GET() {
 
       const away = matchedEvent?.awayAbbr || rawAway;
       const home = matchedEvent?.homeAbbr || rawHome;
+      const awayLogo = matchedEvent?.awayLogo || '';
+      const homeLogo = matchedEvent?.homeLogo || '';
       const eventDate = matchedEvent?.date || rawProp.date || rawProp.startTime || rawProp.lockDate;
 
       let odds = null;
@@ -195,7 +201,9 @@ export async function GET() {
         id: idStr,
         away,
         home,
-        title: `${away} @ ${home}`,
+        awayLogo,
+        homeLogo,
+        title: `${away} @${home}`,
         score,
         odds,
         outcomeAwayId,
@@ -245,8 +253,9 @@ export async function GET() {
       const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
+      const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
       const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}/entries/${e.id}?_=${Date.now()}`,
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?_=${Date.now()}`,
         { cache: 'no-store' }
       );
       if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
@@ -327,7 +336,7 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'format-id-fix').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v7-features').slice(0, 7);
 
     return NextResponse.json({
       myUser,
