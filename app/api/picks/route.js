@@ -312,4 +312,50 @@ export async function GET() {
         if (!propInfo) return;
 
         const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || p.outcome?.id || '');
-        const clean = rawOutcome.toLowerCase().replace
+        const clean = rawOutcome.toLowerCase().replace(/[^a-z0-9]/gi, '');
+
+        let side = null;
+        if (propInfo.outcomeAwayId && (String(propInfo.outcomeAwayId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeAwayId)))) {
+          side = 'away';
+        } else if (propInfo.outcomeHomeId && (String(propInfo.outcomeHomeId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeHomeId)))) {
+          side = 'home';
+        }
+
+        if (!side) {
+          if (clean.length >= 8) {
+            const char = clean.charAt(7);
+            if (char === '1') side = 'away';
+            if (char === '2') side = 'home';
+          }
+        }
+        if (!side) {
+          if (clean.endsWith('1')) side = 'away';
+          else if (clean.endsWith('2')) side = 'home';
+        }
+
+        pickMap[userName][propId] = {
+          side,
+          pts: p.confidenceScore || null
+        };
+      });
+    });
+
+    if (!myUser) myUser = "PosaParty";
+
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v8-logos-links').slice(0, 7);
+
+    return NextResponse.json({
+      myUser,
+      otherUsers,
+      weekNumber: activeWeek,
+      activeProps: contestPropIds,
+      propMap,
+      pickMap,
+      userYearlyScores,
+      userPeriodScores,
+      buildHash
+    });
+  } catch (err) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
