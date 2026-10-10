@@ -4,16 +4,14 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch group metadata first to resolve the authentic live challenge definition & season
+    // 1. Fetch group metadata to resolve live challenge ID and active scoring period
     let groupRes = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/college-football-pickem-2026/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
       { next: { revalidate: 30 } }
     );
 
     let challengeSlug = "college-football-pickem-2026";
-
     if (!groupRes.ok) {
-      // Fallback to base challenge slug with explicit group lookup
       groupRes = await fetch(
         `https://gambit-api.fantasy.espn.com/apis/v1/challenges/college-football-pickem/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
         { next: { revalidate: 30 } }
@@ -25,11 +23,10 @@ export async function GET() {
     const gData = await groupRes.json();
     const entries = gData.entries || [];
 
-    // Dynamically resolve challenge ID and current scoring period from group definition
     const challengeId = gData.challengeId || gData.challenge?.id;
     let activeWeek = gData.currentScoringPeriod?.id || 6;
 
-    // 2. Fetch challenge definition using the resolved challenge ID / slug
+    // 2. Fetch challenge definition using the resolved challenge ID
     let chalUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeSlug}?view=chui_pagetype_group_picks`;
     if (challengeId) {
       chalUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}?view=chui_pagetype_group_picks`;
@@ -42,7 +39,7 @@ export async function GET() {
       activeWeek = chalData.currentScoringPeriod.id;
     }
 
-    // Explicitly fetch propositions for the current scoring period
+    // Explicitly fetch propositions for the current week
     let officialProps = chalData.propositions || [];
     try {
       const spUrl = challengeId
@@ -57,7 +54,7 @@ export async function GET() {
       }
     } catch (e) {}
 
-    // 3. Fetch live 2026 scoreboard across FBS games (groups=80, limit=300) for active week
+    // 3. Fetch live 2026 scoreboard across FBS games (groups=80, limit=300) with odds
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
@@ -88,6 +85,11 @@ export async function GET() {
           const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
           const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
 
+          // Extract Vegas odds / line
+          const oddsObj = comp.odds?.[0] || null;
+          const lineDetails = oddsObj?.details || ''; // e.g. "MICH -3.5" or "EVEN"
+          const overUnder = oddsObj?.overUnder ? `O/U ${oddsObj.overUnder}` : '';
+
           const collectNames = (teamObj) => {
             if (!teamObj) return [];
             return [
@@ -104,6 +106,8 @@ export async function GET() {
             date: ev.date || comp.date || null,
             awayAbbr,
             homeAbbr,
+            lineDetails,
+            overUnder,
             awayNames: collectNames(away?.team),
             homeNames: collectNames(home?.team),
             scoreInfo: {
@@ -133,7 +137,7 @@ export async function GET() {
       return false;
     }
 
-    // 4. Register all 10 propositions before kick
+    // 4. Register official propositions and map odds
     const propMap = {};
     const contestPropIds = [];
 
@@ -182,6 +186,33 @@ export async function GET() {
       const home = matchedEvent?.homeAbbr || rawHome;
       const eventDate = matchedEvent?.date || rawProp.date || rawProp.startTime || rawProp.lockDate;
 
+      // Determine odds favoritism
+      let odds = null;
+      if (matchedEvent?.lineDetails) {
+        const line = matchedEvent.lineDetails.trim();
+        let favoriteSide = null;
+        let lineSpread = '';
+
+        const parts = line.split(/\s+/);
+        if (parts.length >= 2) {
+          const favText = parts[0].toLowerCase();
+          lineSpread = parts.slice(1).join(' '); // e.g. "-3.5"
+
+          if (matchedEvent.awayNames.some(n => n.includes(favText) || favText.includes(n)) || away.toLowerCase().includes(favText)) {
+            favoriteSide = 'away';
+          } else if (matchedEvent.homeNames.some(n => n.includes(favText) || favText.includes(n)) || home.toLowerCase().includes(favText)) {
+            favoriteSide = 'home';
+          }
+        }
+
+        odds = {
+          rawLine: line,
+          favoriteSide,
+          lineSpread,
+          overUnder: matchedEvent.overUnder || ''
+        };
+      }
+
       let kickoffTime = 0;
       if (eventDate) {
         try {
@@ -195,6 +226,7 @@ export async function GET() {
         home,
         title: `${away} @ ${home}`,
         score,
+        odds,
         outcomeAwayId,
         outcomeHomeId,
         kickoffDate: eventDate || null,
@@ -211,7 +243,7 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 5. Fetch each entrant's picks using the resolved challenge slug / ID
+    // 5. Fetch group entrant picks
     const users = [];
     let myUser = null;
     const otherUsers = [];
