@@ -26,7 +26,19 @@ const ABBR_FALLBACKS = {
   'texas': 'TEX',
   'oklahoma': 'OU',
   'georgia': 'UGA',
-  'tennessee': 'TENN'
+  'penn state': 'PSU',
+  'usc': 'USC',
+  'boise state': 'BSU',
+  'fresno state': 'FRES',
+  'north dakota state': 'NDSU',
+  'unlv': 'UNLV',
+  'wake forest': 'WAKE',
+  'nc state': 'NCST',
+  'pittsburgh': 'PITT',
+  'north carolina': 'UNC',
+  'texas a&m': 'TA&M',
+  'houston': 'HOU',
+  'kansas state': 'KSU'
 };
 
 function formatAbbr(name) {
@@ -58,7 +70,7 @@ export default function MatrixDashboard() {
   const fetchPicks = async (isBackground = false) => {
     try {
       if (!isBackground) setLoading(true);
-      const res = await fetch('/api/picks');
+      const res = await fetch(`/api/picks?_=${Date.now()}`);
       if (!res.ok) throw new Error('Failed to load picks');
       const json = await res.json();
       setData(json);
@@ -112,7 +124,7 @@ export default function MatrixDashboard() {
     }
   };
 
-  const { activeProps = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {}, weekNumber = 6 } = data || {};
+  const { activeProps = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {}, weekNumber = 6, buildHash = 'live' } = data || {};
   const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
 
@@ -252,7 +264,7 @@ export default function MatrixDashboard() {
         <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 700, letterSpacing: '0.05em' }}>
           THE ROCK MAN GOT&apos;EM
         </div>
-        <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>Syncing slate & standings...</div>
+        <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>Loading live Week 6 slate...</div>
       </div>
     );
   }
@@ -402,7 +414,6 @@ export default function MatrixDashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#080c14', position: 'relative' }}>
-      {/* Background Graphic Layer: Rock texture watermark */}
       <div
         aria-hidden="true"
         style={{
@@ -507,9 +518,14 @@ export default function MatrixDashboard() {
             <span style={{ fontSize: '12px', fontWeight: 900, letterSpacing: '0.04em', color: '#f8fafc', whiteSpace: 'nowrap' }}>
               THE ROCK MAN GOT&apos;EM
             </span>
-            <span style={{ fontSize: '8px', fontWeight: 700, color: '#38bdf8', letterSpacing: '0.08em', marginTop: '2px' }}>
-              COLLEGE FOOTBALL PICK&apos;EM
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+              <span style={{ fontSize: '8px', fontWeight: 700, color: '#38bdf8', letterSpacing: '0.08em' }}>
+                CFB PICK&apos;EM
+              </span>
+              <span style={{ fontSize: '8px', fontFamily: 'monospace', color: '#64748b' }}>
+                #{buildHash}
+              </span>
+            </div>
           </div>
           <span style={{ background: '#1e293b', color: '#f59e0b', border: '1px solid #78350f', borderRadius: '5px', padding: '2px 6px', fontSize: '10px', fontWeight: 800 }}>
             Wk {weekNumber}
