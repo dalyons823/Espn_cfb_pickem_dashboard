@@ -5,46 +5,47 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch official active propositions directly from ESPN's make_picks view
-    let activeProps = [];
     let activeWeek = 6;
+    let challengeId = null;
 
-    const chalRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
-      { cache: 'no-store' }
-    );
+    // 1. Fetch group metadata FIRST to get the NUMERIC challenge ID
+    let groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&_=${Date.now()}`;
+    let groupRes = await fetch(groupUrl, { cache: 'no-store' });
 
-    if (chalRes.ok) {
-      const chalData = await chalRes.json();
-      activeWeek = chalData.currentScoringPeriod?.id || 6;
-      activeProps = chalData.propositions || [];
+    if (!groupRes.ok) {
+      groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/college-football-pickem/groups/${GROUP_ID}?view=mGroup&view=mSettings&_=${Date.now()}`;
+      groupRes = await fetch(groupUrl, { cache: 'no-store' });
     }
 
-    // Defensive fallback: If view filter drops propositions, fetch base challenge definition
-    if (!activeProps.length) {
-      try {
-        const fallbackRes = await fetch(
-          `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?_=${Date.now()}`,
-          { cache: 'no-store' }
-        );
-        if (fallbackRes.ok) {
-          const fallbackData = await fallbackRes.json();
-          activeWeek = fallbackData.currentScoringPeriod?.id || activeWeek;
-          activeProps = (fallbackData.propositions || []).filter(p => {
-            const sp = p.scoringPeriodId || p.scoringPeriod;
-            return !sp || Number(sp) === Number(activeWeek);
-          });
-        }
-      } catch (e) {
-        console.error("Fallback proposition fetch error:", e);
+    const gData = groupRes.ok ? await groupRes.json() : {};
+    challengeId = gData.challengeId || gData.challenge?.id || null;
+    activeWeek = gData.currentScoringPeriod?.id || 6;
+
+    // 2. Fetch actual live propositions using the numeric challenge ID
+    let activeProps = [];
+    const propTarget = challengeId ? challengeId : CHALLENGE_SLUG;
+
+    try {
+      const propRes = await fetch(
+        `https://gambit-api.fantasy.espn.com/apis/v1/propositions?challengeId=${propTarget}&scoringPeriodId=${activeWeek}&view=propositions_scoring&_=${Date.now()}`,
+        { cache: 'no-store' }
+      );
+      if (propRes.ok) {
+        const propData = await propRes.json();
+        activeProps = Array.isArray(propData) ? propData : (propData.propositions || propData.items || []);
       }
+    } catch (e) {
+      console.error("Propositions API error:", e);
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with Vegas lines
+    // WE ABSOLUTELY DO NOT FALL BACK TO THE /challenges/ ENDPOINT HERE.
+    // That endpoint is what was serving the cached 2024 template (Notre Dame, Nebraska, etc.).
+
+    // 3. Fetch live scoreboard
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}&_=${Date.now()}`,
+        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}&dates=2026&_=${Date.now()}`,
         { cache: 'no-store' }
       );
       if (sbRes.ok) {
@@ -54,7 +55,6 @@ export async function GET() {
           if (!comp) return null;
           const away = comp.competitors?.find(c => c.homeAway === 'away');
           const home = comp.competitors?.find(c => c.homeAway === 'home');
-
           const state = ev.status?.type?.state || 'pre';
           const isPre = state === 'pre';
 
@@ -68,13 +68,9 @@ export async function GET() {
             else leader = 'tie';
           }
 
-          const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
-          const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
-
           const oddsObj = comp.odds?.[0] || null;
           const lineDetails = oddsObj?.details || '';
-          const overUnder = oddsObj?.overUnder ? `O/U ${oddsObj.overUnder}` : '';
-
+          
           const collectNames = (teamObj) => {
             if (!teamObj) return [];
             return [
@@ -89,10 +85,9 @@ export async function GET() {
 
           return {
             date: ev.date || comp.date || null,
-            awayAbbr,
-            homeAbbr,
+            awayAbbr: away?.team?.abbreviation || away?.team?.shortDisplayName || '',
+            homeAbbr: home?.team?.abbreviation || home?.team?.shortDisplayName || '',
             lineDetails,
-            overUnder,
             awayNames: collectNames(away?.team),
             homeNames: collectNames(home?.team),
             scoreInfo: {
@@ -100,9 +95,7 @@ export async function GET() {
               homeScore: !isPre && hScore !== null ? String(hScore) : '',
               statusDetail: ev.status?.type?.shortDetail || '',
               state,
-              leader,
-              awayAbbr,
-              homeAbbr
+              leader
             }
           };
         }).filter(Boolean);
@@ -122,7 +115,7 @@ export async function GET() {
       return false;
     }
 
-    // 3. Register active propositions and attach Vegas odds
+    // 4. Map active props
     const propMap = {};
     const contestPropIds = [];
 
@@ -161,9 +154,7 @@ export async function GET() {
           homeScore: '',
           statusDetail: 'Final',
           state: 'post',
-          leader: winner,
-          awayAbbr: rawAway,
-          homeAbbr: rawHome
+          leader: winner
         };
       }
 
@@ -189,12 +180,7 @@ export async function GET() {
           }
         }
 
-        odds = {
-          rawLine: line,
-          favoriteSide,
-          lineSpread,
-          overUnder: matchedEvent.overUnder || ''
-        };
+        odds = { rawLine: line, favoriteSide, lineSpread };
       }
 
       let kickoffTime = 0;
@@ -227,14 +213,8 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group entries & picks
-    let groupRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&_=${Date.now()}`,
-      { cache: 'no-store' }
-    );
-    const gData = groupRes.ok ? await groupRes.json() : {};
+    // 5. Fetch group entries
     const entries = gData.entries || [];
-
     const users = [];
     let myUser = null;
     const otherUsers = [];
@@ -257,8 +237,9 @@ export async function GET() {
       const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
+      const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
       const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}?_=${Date.now()}`,
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?_=${Date.now()}`,
         { cache: 'no-store' }
       );
       if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
@@ -339,13 +320,13 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v6-restored').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'no-nd-fix').slice(0, 7);
 
     return NextResponse.json({
       myUser,
       otherUsers,
       weekNumber: activeWeek,
-      activeProps: contestPropIds.slice(0, 10),
+      activeProps: contestPropIds.slice(0, 10), // Limit to 10 max
       propMap,
       pickMap,
       userYearlyScores,
