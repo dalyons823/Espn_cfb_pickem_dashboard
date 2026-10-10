@@ -5,13 +5,13 @@ const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch official 10 propositions directly from the official make_picks view
+    // 1. Fetch official 10 propositions from ESPN's make_picks view
     let activeProps = [];
     let activeWeek = 6;
 
     const chalRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks`,
-      { next: { revalidate: 30 } }
+      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
+      { cache: 'no-store' }
     );
 
     if (chalRes.ok) {
@@ -20,12 +20,12 @@ export async function GET() {
       activeProps = chalData.propositions || [];
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with Vegas odds
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with Vegas lines
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}`,
-        { next: { revalidate: 30 } }
+        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}&_=${Date.now()}`,
+        { cache: 'no-store' }
       );
       if (sbRes.ok) {
         const sbData = await sbRes.json();
@@ -102,7 +102,7 @@ export async function GET() {
       return false;
     }
 
-    // 3. Build proposition map for the authentic 10 games
+    // 3. Register official 10 propositions and link Vegas odds
     const propMap = {};
     const contestPropIds = [];
 
@@ -151,7 +151,6 @@ export async function GET() {
       const home = matchedEvent?.homeAbbr || rawHome;
       const eventDate = matchedEvent?.date || rawProp.date || rawProp.startTime || rawProp.lockDate;
 
-      // Vegas Odds Integration
       let odds = null;
       if (matchedEvent?.lineDetails) {
         const line = matchedEvent.lineDetails.trim();
@@ -199,7 +198,6 @@ export async function GET() {
       };
     });
 
-    // Chronological order ascending by kickoff
     contestPropIds.sort((a, b) => {
       const tA = propMap[a]?.kickoffTime || 0;
       const tB = propMap[b]?.kickoffTime || 0;
@@ -209,10 +207,10 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group standings & entrants
+    // 4. Fetch group standings & picks
     let groupRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
-      { next: { revalidate: 30 } }
+      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&_=${Date.now()}`,
+      { cache: 'no-store' }
     );
     const gData = groupRes.ok ? await groupRes.json() : {};
     const entries = gData.entries || [];
@@ -240,8 +238,8 @@ export async function GET() {
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}`,
-        { next: { revalidate: 30 } }
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}?_=${Date.now()}`,
+        { cache: 'no-store' }
       );
       if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
@@ -321,6 +319,9 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
+    // Pass the git commit sha or deploy stamp
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v6.3-live').slice(0, 7);
+
     return NextResponse.json({
       myUser,
       otherUsers,
@@ -329,7 +330,8 @@ export async function GET() {
       propMap,
       pickMap,
       userYearlyScores,
-      userPeriodScores
+      userPeriodScores,
+      buildHash
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
