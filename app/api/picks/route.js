@@ -1,64 +1,30 @@
 import { NextResponse } from 'next/server';
 
+const CHALLENGE_SLUG = "college-football-pickem-2026";
 const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch group metadata to resolve live challenge ID and active scoring period
-    let groupRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/college-football-pickem-2026/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
+    // 1. Fetch official 10 propositions directly from the official make_picks view
+    let activeProps = [];
+    let activeWeek = 6;
+
+    const chalRes = await fetch(
+      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks`,
       { next: { revalidate: 30 } }
     );
 
-    let challengeSlug = "college-football-pickem-2026";
-    if (!groupRes.ok) {
-      groupRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/college-football-pickem/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
-        { next: { revalidate: 30 } }
-      );
-      challengeSlug = "college-football-pickem";
+    if (chalRes.ok) {
+      const chalData = await chalRes.json();
+      activeWeek = chalData.currentScoringPeriod?.id || 6;
+      activeProps = chalData.propositions || [];
     }
 
-    if (!groupRes.ok) throw new Error("Could not fetch group data from ESPN");
-    const gData = await groupRes.json();
-    const entries = gData.entries || [];
-
-    const challengeId = gData.challengeId || gData.challenge?.id;
-    let activeWeek = gData.currentScoringPeriod?.id || 6;
-
-    // 2. Fetch challenge definition using the resolved challenge ID
-    let chalUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeSlug}?view=chui_pagetype_group_picks`;
-    if (challengeId) {
-      chalUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}?view=chui_pagetype_group_picks`;
-    }
-
-    const chalRes = await fetch(chalUrl, { next: { revalidate: 30 } });
-    const chalData = chalRes.ok ? await chalRes.json() : {};
-
-    if (chalData.currentScoringPeriod?.id) {
-      activeWeek = chalData.currentScoringPeriod.id;
-    }
-
-    // Explicitly fetch propositions for the current week
-    let officialProps = chalData.propositions || [];
-    try {
-      const spUrl = challengeId
-        ? `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}?scoringPeriodId=${activeWeek}`
-        : `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeSlug}?scoringPeriodId=${activeWeek}`;
-      const spRes = await fetch(spUrl, { next: { revalidate: 30 } });
-      if (spRes.ok) {
-        const spData = await spRes.json();
-        if (spData.propositions && spData.propositions.length > 0) {
-          officialProps = spData.propositions;
-        }
-      }
-    } catch (e) {}
-
-    // 3. Fetch live 2026 scoreboard across FBS games (groups=80, limit=300) with odds
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with Vegas odds
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}&dates=2026`,
+        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}`,
         { next: { revalidate: 30 } }
       );
       if (sbRes.ok) {
@@ -85,9 +51,8 @@ export async function GET() {
           const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
           const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
 
-          // Extract Vegas odds / line
           const oddsObj = comp.odds?.[0] || null;
-          const lineDetails = oddsObj?.details || ''; // e.g. "MICH -3.5" or "EVEN"
+          const lineDetails = oddsObj?.details || '';
           const overUnder = oddsObj?.overUnder ? `O/U ${oddsObj.overUnder}` : '';
 
           const collectNames = (teamObj) => {
@@ -137,11 +102,11 @@ export async function GET() {
       return false;
     }
 
-    // 4. Register official propositions and map odds
+    // 3. Build proposition map for the authentic 10 games
     const propMap = {};
     const contestPropIds = [];
 
-    officialProps.forEach(rawProp => {
+    activeProps.forEach(rawProp => {
       if (!rawProp || !rawProp.id) return;
       const idStr = String(rawProp.id);
       contestPropIds.push(idStr);
@@ -186,7 +151,7 @@ export async function GET() {
       const home = matchedEvent?.homeAbbr || rawHome;
       const eventDate = matchedEvent?.date || rawProp.date || rawProp.startTime || rawProp.lockDate;
 
-      // Determine odds favoritism
+      // Vegas Odds Integration
       let odds = null;
       if (matchedEvent?.lineDetails) {
         const line = matchedEvent.lineDetails.trim();
@@ -196,7 +161,7 @@ export async function GET() {
         const parts = line.split(/\s+/);
         if (parts.length >= 2) {
           const favText = parts[0].toLowerCase();
-          lineSpread = parts.slice(1).join(' '); // e.g. "-3.5"
+          lineSpread = parts.slice(1).join(' ');
 
           if (matchedEvent.awayNames.some(n => n.includes(favText) || favText.includes(n)) || away.toLowerCase().includes(favText)) {
             favoriteSide = 'away';
@@ -234,6 +199,7 @@ export async function GET() {
       };
     });
 
+    // Chronological order ascending by kickoff
     contestPropIds.sort((a, b) => {
       const tA = propMap[a]?.kickoffTime || 0;
       const tB = propMap[b]?.kickoffTime || 0;
@@ -243,7 +209,14 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 5. Fetch group entrant picks
+    // 4. Fetch group standings & entrants
+    let groupRes = await fetch(
+      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
+      { next: { revalidate: 30 } }
+    );
+    const gData = groupRes.ok ? await groupRes.json() : {};
+    const entries = gData.entries || [];
+
     const users = [];
     let myUser = null;
     const otherUsers = [];
@@ -266,11 +239,10 @@ export async function GET() {
       const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
-      const entryFetchUrl = challengeId
-        ? `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}/entries/${e.id}`
-        : `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeSlug}/entries/${e.id}`;
-
-      const eRes = await fetch(entryFetchUrl, { next: { revalidate: 30 } });
+      const eRes = await fetch(
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}`,
+        { next: { revalidate: 30 } }
+      );
       if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
 
