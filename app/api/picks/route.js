@@ -2,41 +2,59 @@ import { NextResponse } from 'next/server';
 
 const CHALLENGE_SLUG = "college-football-pickem-2026";
 const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
-const ACTIVE_WEEK = 6;
-const TARGET_DATE = "20261010"; // Saturday, October 10, 2026
 
 export async function GET() {
   try {
-    // 1. Ingest Weekly Propositions via dedicated Gambit propositions endpoint
-    let rawProps = [];
-    try {
-      const propRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/propositions?challengeId=${CHALLENGE_SLUG}&scoringPeriodId=${ACTIVE_WEEK}&view=propositions_scoring&_=${Date.now()}`,
-        { cache: 'no-store' }
-      );
-      if (propRes.ok) {
-        const propData = await propRes.json();
-        rawProps = Array.isArray(propData) ? propData : (propData.propositions || propData.items || []);
-      }
-    } catch (e) {
-      console.error("Propositions API error:", e);
+    // 1. Fetch official active propositions directly from ESPN's make_picks view
+    let activeProps = [];
+    let activeWeek = 6;
+
+    const chalRes = await fetch(
+      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
+      { cache: 'no-store' }
+    );
+
+    if (chalRes.ok) {
+      const chalData = await chalRes.json();
+      activeWeek = chalData.currentScoringPeriod?.id || 6;
+      activeProps = chalData.propositions || [];
     }
 
-    // 2. Fetch live ESPN Core Scoreboard (groups=80 for FBS, limit=100)
-    const scoreboardByEventId = {};
+    // Defensive fallback: If view filter drops propositions, fetch base challenge definition
+    if (!activeProps.length) {
+      try {
+        const fallbackRes = await fetch(
+          `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?_=${Date.now()}`,
+          { cache: 'no-store' }
+        );
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json();
+          activeWeek = fallbackData.currentScoringPeriod?.id || activeWeek;
+          activeProps = (fallbackData.propositions || []).filter(p => {
+            const sp = p.scoringPeriodId || p.scoringPeriod;
+            return !sp || Number(sp) === Number(activeWeek);
+          });
+        }
+      } catch (e) {
+        console.error("Fallback proposition fetch error:", e);
+      }
+    }
+
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with Vegas lines
+    let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${TARGET_DATE}&groups=80&limit=100&_=${Date.now()}`,
+        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}&_=${Date.now()}`,
         { cache: 'no-store' }
       );
       if (sbRes.ok) {
         const sbData = await sbRes.json();
-        (sbData.events || []).forEach(ev => {
+        scoreboardEvents = (sbData.events || []).map(ev => {
           const comp = ev.competitions?.[0];
-          if (!comp) return;
-
+          if (!comp) return null;
           const away = comp.competitors?.find(c => c.homeAway === 'away');
           const home = comp.competitors?.find(c => c.homeAway === 'home');
+
           const state = ev.status?.type?.state || 'pre';
           const isPre = state === 'pre';
 
@@ -50,63 +68,93 @@ export async function GET() {
             else leader = 'tie';
           }
 
+          const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
+          const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
+
           const oddsObj = comp.odds?.[0] || null;
           const lineDetails = oddsObj?.details || '';
           const overUnder = oddsObj?.overUnder ? `O/U ${oddsObj.overUnder}` : '';
-          const broadcast = comp.broadcasts?.[0]?.names?.[0] || '';
 
-          scoreboardByEventId[String(ev.id)] = {
-            eventId: String(ev.id),
+          const collectNames = (teamObj) => {
+            if (!teamObj) return [];
+            return [
+              teamObj.abbreviation,
+              teamObj.shortDisplayName,
+              teamObj.displayName,
+              teamObj.name,
+              teamObj.location,
+              teamObj.nickname
+            ].filter(Boolean).map(s => String(s).toLowerCase());
+          };
+
+          return {
             date: ev.date || comp.date || null,
-            broadcast,
+            awayAbbr,
+            homeAbbr,
             lineDetails,
             overUnder,
+            awayNames: collectNames(away?.team),
+            homeNames: collectNames(home?.team),
             scoreInfo: {
               awayScore: !isPre && aScore !== null ? String(aScore) : '',
               homeScore: !isPre && hScore !== null ? String(hScore) : '',
               statusDetail: ev.status?.type?.shortDetail || '',
               state,
               leader,
-              awayAbbr: away?.team?.abbreviation || '',
-              homeAbbr: home?.team?.abbreviation || ''
+              awayAbbr,
+              homeAbbr
             }
           };
-        });
+        }).filter(Boolean);
       }
     } catch (e) {
-      console.error("Scoreboard API error:", e);
+      console.error("Scoreboard fetch error:", e);
     }
 
-    // 3. Assemble Joined Slate Matrix
+    function isTeamMatch(propTeamName, eventTeamNames) {
+      if (!propTeamName) return false;
+      const raw = String(propTeamName).trim().toLowerCase();
+      if (eventTeamNames.includes(raw)) return true;
+      const cleanTokens = raw.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(t => t.length > 2 && !['state', 'the', 'university', 'college'].includes(t));
+      if (cleanTokens.length > 0) {
+        return eventTeamNames.some(n => cleanTokens.every(token => n.includes(token)));
+      }
+      return false;
+    }
+
+    // 3. Register active propositions and attach Vegas odds
     const propMap = {};
     const contestPropIds = [];
 
-    rawProps.forEach(p => {
-      if (!p || !p.id) return;
-      const propId = String(p.id);
-      contestPropIds.push(propId);
+    activeProps.forEach(rawProp => {
+      if (!rawProp || !rawProp.id) return;
+      const idStr = String(rawProp.id);
+      contestPropIds.push(idStr);
 
-      const outcomes = p.possibleOutcomes || p.outcomes || [];
-      const awayOut = outcomes[0] || {};
-      const homeOut = outcomes[1] || {};
+      const outcomes = rawProp.possibleOutcomes || rawProp.outcomes || [];
+      const rawAway = outcomes[0]?.shortDisplayName || outcomes[0]?.abbreviation || outcomes[0]?.name || outcomes[0]?.caption || 'Away';
+      const rawHome = outcomes[1]?.shortDisplayName || outcomes[1]?.abbreviation || outcomes[1]?.name || outcomes[1]?.caption || 'Home';
+      const outcomeAwayId = outcomes[0]?.id ? String(outcomes[0].id) : null;
+      const outcomeHomeId = outcomes[1]?.id ? String(outcomes[1].id) : null;
 
-      const away = awayOut.shortDisplayName || awayOut.abbreviation || awayOut.name || 'Away';
-      const home = homeOut.shortDisplayName || homeOut.abbreviation || homeOut.name || 'Home';
-      const outcomeAwayId = awayOut.id ? String(awayOut.id) : null;
-      const outcomeHomeId = homeOut.id ? String(homeOut.id) : null;
-
-      // Direct Event ID Join
-      const eventId = String(awayOut.eventId || homeOut.eventId || p.eventId || '');
-      const sbEvent = scoreboardByEventId[eventId] || null;
+      let matchedEvent = null;
+      for (const ev of scoreboardEvents) {
+        const awayMatches = isTeamMatch(rawAway, ev.awayNames) || isTeamMatch(rawAway, ev.homeNames);
+        const homeMatches = isTeamMatch(rawHome, ev.homeNames) || isTeamMatch(rawHome, ev.awayNames);
+        if (awayMatches && homeMatches) {
+          matchedEvent = ev;
+          break;
+        }
+      }
 
       let winner = null;
-      if (awayOut.winner || (p.correctOutcomeId && String(p.correctOutcomeId) === outcomeAwayId)) {
+      if (outcomes[0]?.winner || (rawProp.correctOutcomeId && String(rawProp.correctOutcomeId) === outcomeAwayId)) {
         winner = 'away';
-      } else if (homeOut.winner || (p.correctOutcomeId && String(p.correctOutcomeId) === outcomeHomeId)) {
+      } else if (outcomes[1]?.winner || (rawProp.correctOutcomeId && String(rawProp.correctOutcomeId) === outcomeHomeId)) {
         winner = 'home';
       }
 
-      let score = sbEvent?.scoreInfo || null;
+      let score = matchedEvent?.scoreInfo || null;
       if (!score && winner) {
         score = {
           awayScore: '',
@@ -114,38 +162,41 @@ export async function GET() {
           statusDetail: 'Final',
           state: 'post',
           leader: winner,
-          awayAbbr: away,
-          homeAbbr: home
+          awayAbbr: rawAway,
+          homeAbbr: rawHome
         };
       }
 
-      // Vegas Line & Favorite Resolution
+      const away = matchedEvent?.awayAbbr || rawAway;
+      const home = matchedEvent?.homeAbbr || rawHome;
+      const eventDate = matchedEvent?.date || rawProp.date || rawProp.startTime || rawProp.lockDate;
+
       let odds = null;
-      const lineStr = sbEvent?.lineDetails || '';
-      if (lineStr) {
+      if (matchedEvent?.lineDetails) {
+        const line = matchedEvent.lineDetails.trim();
         let favoriteSide = null;
         let lineSpread = '';
-        const parts = lineStr.trim().split(/\s+/);
+
+        const parts = line.split(/\s+/);
         if (parts.length >= 2) {
-          const favToken = parts[0].toLowerCase();
+          const favText = parts[0].toLowerCase();
           lineSpread = parts.slice(1).join(' ');
 
-          if (away.toLowerCase().includes(favToken) || favToken.includes(away.toLowerCase())) {
+          if (matchedEvent.awayNames.some(n => n.includes(favText) || favText.includes(n)) || away.toLowerCase().includes(favText)) {
             favoriteSide = 'away';
-          } else if (home.toLowerCase().includes(favToken) || favToken.includes(home.toLowerCase())) {
+          } else if (matchedEvent.homeNames.some(n => n.includes(favText) || favText.includes(n)) || home.toLowerCase().includes(favText)) {
             favoriteSide = 'home';
           }
         }
 
         odds = {
-          rawLine: lineStr,
+          rawLine: line,
           favoriteSide,
           lineSpread,
-          overUnder: sbEvent?.overUnder || ''
+          overUnder: matchedEvent.overUnder || ''
         };
       }
 
-      const eventDate = sbEvent?.date || p.lockDate || p.date || null;
       let kickoffTime = 0;
       if (eventDate) {
         try {
@@ -153,23 +204,20 @@ export async function GET() {
         } catch (e) {}
       }
 
-      propMap[propId] = {
-        id: propId,
-        eventId,
+      propMap[idStr] = {
+        id: idStr,
         away,
         home,
-        broadcast: sbEvent?.broadcast || '',
         title: `${away} @ ${home}`,
         score,
         odds,
         outcomeAwayId,
         outcomeHomeId,
-        kickoffDate: eventDate,
+        kickoffDate: eventDate || null,
         kickoffTime
       };
     });
 
-    // Chronological Sort (UTC Ascending)
     contestPropIds.sort((a, b) => {
       const tA = propMap[a]?.kickoffTime || 0;
       const tB = propMap[b]?.kickoffTime || 0;
@@ -179,7 +227,7 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Query League Group & Member Entry Selections
+    // 4. Fetch group entries & picks
     let groupRes = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&_=${Date.now()}`,
       { cache: 'no-store' }
@@ -291,12 +339,12 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'propositions-feed').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v6-restored').slice(0, 7);
 
     return NextResponse.json({
       myUser,
       otherUsers,
-      weekNumber: ACTIVE_WEEK,
+      weekNumber: activeWeek,
       activeProps: contestPropIds.slice(0, 10),
       propMap,
       pickMap,
