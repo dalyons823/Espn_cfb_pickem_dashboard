@@ -1,27 +1,54 @@
 import { NextResponse } from 'next/server';
 
-const CHALLENGE_SLUG = "college-football-pickem-2026";
 const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET() {
   try {
-    // 1. Fetch challenge definitions to get active scoring period and official propositions
-    const chalRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_group_picks`,
+    // 1. Fetch group metadata first to resolve the authentic live challenge definition & season
+    let groupRes = await fetch(
+      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/college-football-pickem-2026/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
       { next: { revalidate: 30 } }
     );
-    if (!chalRes.ok) throw new Error("Could not fetch challenge definition");
-    const chalData = await chalRes.json();
 
-    const activeWeek = chalData.currentScoringPeriod?.id || 6;
+    let challengeSlug = "college-football-pickem-2026";
 
-    // Fetch official propositions explicitly for the active week
-    let officialProps = chalData.propositions || [];
-    try {
-      const spRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?scoringPeriodId=${activeWeek}`,
+    if (!groupRes.ok) {
+      // Fallback to base challenge slug with explicit group lookup
+      groupRes = await fetch(
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/college-football-pickem/groups/${GROUP_ID}?view=mGroup&view=mSettings`,
         { next: { revalidate: 30 } }
       );
+      challengeSlug = "college-football-pickem";
+    }
+
+    if (!groupRes.ok) throw new Error("Could not fetch group data from ESPN");
+    const gData = await groupRes.json();
+    const entries = gData.entries || [];
+
+    // Dynamically resolve challenge ID and current scoring period from group definition
+    const challengeId = gData.challengeId || gData.challenge?.id;
+    let activeWeek = gData.currentScoringPeriod?.id || 6;
+
+    // 2. Fetch challenge definition using the resolved challenge ID / slug
+    let chalUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeSlug}?view=chui_pagetype_group_picks`;
+    if (challengeId) {
+      chalUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}?view=chui_pagetype_group_picks`;
+    }
+
+    const chalRes = await fetch(chalUrl, { next: { revalidate: 30 } });
+    const chalData = chalRes.ok ? await chalRes.json() : {};
+
+    if (chalData.currentScoringPeriod?.id) {
+      activeWeek = chalData.currentScoringPeriod.id;
+    }
+
+    // Explicitly fetch propositions for the current scoring period
+    let officialProps = chalData.propositions || [];
+    try {
+      const spUrl = challengeId
+        ? `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}?scoringPeriodId=${activeWeek}`
+        : `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeSlug}?scoringPeriodId=${activeWeek}`;
+      const spRes = await fetch(spUrl, { next: { revalidate: 30 } });
       if (spRes.ok) {
         const spData = await spRes.json();
         if (spData.propositions && spData.propositions.length > 0) {
@@ -30,11 +57,11 @@ export async function GET() {
       }
     } catch (e) {}
 
-    // 2. Fetch live scoreboard across FBS games (groups=80, limit=300) for active week
+    // 3. Fetch live 2026 scoreboard across FBS games (groups=80, limit=300) for active week
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}`,
+        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}&dates=2026`,
         { next: { revalidate: 30 } }
       );
       if (sbRes.ok) {
@@ -106,7 +133,7 @@ export async function GET() {
       return false;
     }
 
-    // 3. Register ALL 10 official propositions before games start
+    // 4. Register all 10 propositions before kick
     const propMap = {};
     const contestPropIds = [];
 
@@ -175,7 +202,6 @@ export async function GET() {
       };
     });
 
-    // Sort all 10 upcoming games chronologically ascending by scheduled kickoff
     contestPropIds.sort((a, b) => {
       const tA = propMap[a]?.kickoffTime || 0;
       const tB = propMap[b]?.kickoffTime || 0;
@@ -185,15 +211,7 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch Group Entries & Picks
-    const groupRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup`,
-      { next: { revalidate: 60 } }
-    );
-    if (!groupRes.ok) throw new Error("Could not fetch group data");
-    const gData = await groupRes.json();
-    const entries = gData.entries || [];
-
+    // 5. Fetch each entrant's picks using the resolved challenge slug / ID
     const users = [];
     let myUser = null;
     const otherUsers = [];
@@ -216,10 +234,11 @@ export async function GET() {
       const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
-      const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/entries/${e.id}`,
-        { next: { revalidate: 30 } }
-      );
+      const entryFetchUrl = challengeId
+        ? `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}/entries/${e.id}`
+        : `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeSlug}/entries/${e.id}`;
+
+      const eRes = await fetch(entryFetchUrl, { next: { revalidate: 30 } });
       if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
 
