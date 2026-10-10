@@ -20,10 +20,15 @@ export async function GET() {
       
       const allProps = chalData.propositions || [];
       
-      // CRITICAL FIX: Filter out old games so we only keep the active week's games
+      // THE MAGIC FILTER: Extract only the active week's Confidence Format (ID 2) games
       activeProps = allProps.filter(p => {
         const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
-        return Number(spId) === Number(activeWeek);
+        if (Number(spId) !== Number(activeWeek)) return false;
+
+        if (p.scoringFormatIds && Array.isArray(p.scoringFormatIds)) {
+          return p.scoringFormatIds.includes(2) || p.scoringFormatIds.includes("2");
+        }
+        return false;
       });
     }
 
@@ -216,7 +221,7 @@ export async function GET() {
     );
     const gData = groupRes.ok ? await groupRes.json() : {};
     const entries = gData.entries || [];
-    const challengeId = gData.challengeId || gData.challenge?.id;
+    const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
 
     const users = [];
     let myUser = null;
@@ -240,9 +245,8 @@ export async function GET() {
       const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
-      const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
       const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?_=${Date.now()}`,
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${challengeId}/entries/${e.id}?_=${Date.now()}`,
         { cache: 'no-store' }
       );
       if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
@@ -323,7 +327,7 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'period-filter-fix').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'format-id-fix').slice(0, 7);
 
     return NextResponse.json({
       myUser,
