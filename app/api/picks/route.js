@@ -209,7 +209,7 @@ export async function GET() {
         home,
         awayLogo,
         homeLogo,
-        title: `${away} @ ${home}`,
+        title: `${away} @${home}`,
         score,
         odds,
         outcomeAwayId,
@@ -228,134 +228,6 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group entries & picks
+    // 4. Fetch group entries, attaching the mScoreboard view flag to force history extraction
     let groupRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&_=${Date.now()}`,
-      { cache: 'no-store' }
-    );
-    const gData = groupRes.ok ? await groupRes.json() : {};
-    const entries = gData.entries || [];
-    const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
-
-    const users = [];
-    let myUser = null;
-    const otherUsers = [];
-    const pickMap = {};
-    const userYearlyScores = {};
-    const userPeriodScores = {};
-
-    function extractScore(obj) {
-      if (!obj) return null;
-      if (typeof obj === 'number') return obj;
-      if (typeof obj.value === 'number') return obj.value;
-      if (typeof obj.score === 'number') return obj.score;
-      if (typeof obj.points === 'number') return obj.points;
-      if (typeof obj.overallScore === 'number') return obj.overallScore;
-      if (typeof obj.totalPoints === 'number') return obj.totalPoints;
-      return null;
-    }
-
-    const entryPromises = entries.map(async (e) => {
-      const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
-      let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
-
-      const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
-      const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?_=${Date.now()}`,
-        { cache: 'no-store' }
-      );
-      if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
-      const eData = await eRes.json();
-
-      if (scoreVal === null) {
-        scoreVal = extractScore(eData.score) ?? extractScore(eData.points) ?? extractScore(eData.overallScore) ?? extractScore(eData) ?? 0;
-      }
-
-      const periodScores = {};
-      const sources = [eData.scores, eData.scoresByScoringPeriod, e.scores, e.scoresByScoringPeriod];
-      for (const src of sources) {
-        if (!src) continue;
-        if (Array.isArray(src)) {
-          src.forEach(item => {
-            const pId = item?.scoringPeriodId ?? item?.periodId ?? item?.period;
-            const val = extractScore(item);
-            if (pId !== undefined && val !== null) periodScores[Number(pId)] = val;
-          });
-        } else if (typeof src === 'object') {
-          Object.entries(src).forEach(([k, item]) => {
-            const val = extractScore(item);
-            if (val !== null) periodScores[Number(k)] = val;
-          });
-        }
-      }
-
-      return { userName, picks: eData.picks || [], scoreVal: scoreVal || 0, periodScores };
-    });
-
-    const settled = await Promise.all(entryPromises);
-
-    settled.forEach(({ userName, picks, scoreVal, periodScores }) => {
-      userYearlyScores[userName] = scoreVal;
-      userPeriodScores[userName] = periodScores || {};
-
-      if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
-        myUser = userName;
-      } else {
-        otherUsers.push(userName);
-      }
-      users.push(userName);
-      pickMap[userName] = {};
-
-      picks.forEach(p => {
-        const propId = String(p.propositionId || '');
-        const propInfo = propMap[propId];
-        if (!propInfo) return;
-
-        const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || p.outcome?.id || '');
-        const clean = rawOutcome.toLowerCase().replace(/[^a-z0-9]/gi, '');
-
-        let side = null;
-        if (propInfo.outcomeAwayId && (String(propInfo.outcomeAwayId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeAwayId)))) {
-          side = 'away';
-        } else if (propInfo.outcomeHomeId && (String(propInfo.outcomeHomeId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeHomeId)))) {
-          side = 'home';
-        }
-
-        if (!side) {
-          if (clean.length >= 8) {
-            const char = clean.charAt(7);
-            if (char === '1') side = 'away';
-            if (char === '2') side = 'home';
-          }
-        }
-        if (!side) {
-          if (clean.endsWith('1')) side = 'away';
-          else if (clean.endsWith('2')) side = 'home';
-        }
-
-        pickMap[userName][propId] = {
-          side,
-          pts: p.confidenceScore || null
-        };
-      });
-    });
-
-    if (!myUser) myUser = "PosaParty";
-
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v8-logos-links').slice(0, 7);
-
-    return NextResponse.json({
-      myUser,
-      otherUsers,
-      weekNumber: activeWeek,
-      activeProps: contestPropIds,
-      propMap,
-      pickMap,
-      userYearlyScores,
-      userPeriodScores,
-      buildHash
-    });
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
-}
+      `
