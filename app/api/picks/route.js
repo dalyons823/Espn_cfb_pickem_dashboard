@@ -232,7 +232,8 @@ export async function GET() {
     const entries = gData.entries || [];
     const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
 
-    const users = [];
+    const users = []; // Will now store entryIds instead of names
+    const userNames = {}; // NEW: Mapping entryId -> Display Name
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
@@ -255,13 +256,14 @@ export async function GET() {
     }
 
     const entryPromises = entries.map(async (e) => {
-      const userName = e.name || e.member?.displayName || `Entry ${String(e.id || '').slice(0, 6)}`;
+      const entryId = String(e.id);
+      const userName = e.name || e.member?.displayName || `Entry ${entryId.slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
       const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&_=${Date.now()}`;
       const eRes = await fetch(entryUrl, { cache: 'no-store' });
-      if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
+      if (!eRes.ok) return { entryId, userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
 
       if (scoreVal === null) {
@@ -269,10 +271,8 @@ export async function GET() {
       }
 
       const periodScores = {};
-      
-      // THE FIX: Added your precise "scoreByPeriod" payload path to the hunter array
       const sources = [
-        eData.scoreByPeriod,              // <--- The exact key you found
+        eData.scoreByPeriod,              
         e.scoreByPeriod,
         eData.score?.scoreByPeriod, 
         eData.scores,
@@ -301,22 +301,24 @@ export async function GET() {
         }
       }
 
-      return { userName, picks: eData.picks || [], scoreVal: scoreVal || 0, periodScores };
+      return { entryId, userName, picks: eData.picks || [], scoreVal: scoreVal || 0, periodScores };
     });
 
     const settled = await Promise.all(entryPromises);
 
-    settled.forEach(({ userName, picks, scoreVal, periodScores }) => {
-      userYearlyScores[userName] = scoreVal;
-      userPeriodScores[userName] = periodScores || {};
+    settled.forEach(({ entryId, userName, picks, scoreVal, periodScores }) => {
+      userNames[entryId] = userName; // Save the mapping
+      userYearlyScores[entryId] = scoreVal;
+      userPeriodScores[entryId] = periodScores || {};
 
+      // Match PosaParty, but save their ID instead of their string name
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
-        myUser = userName;
+        myUser = entryId;
       } else {
-        otherUsers.push(userName);
+        otherUsers.push(entryId);
       }
-      users.push(userName);
-      pickMap[userName] = {};
+      users.push(entryId);
+      pickMap[entryId] = {};
 
       picks.forEach(p => {
         const propId = String(p.propositionId || '');
@@ -345,20 +347,24 @@ export async function GET() {
           else if (clean.endsWith('2')) side = 'home';
         }
 
-        pickMap[userName][propId] = {
+        pickMap[entryId][propId] = {
           side,
           pts: p.confidenceScore || null
         };
       });
     });
 
-    if (!myUser) myUser = "PosaParty";
+    // Fallback if PosaParty wasn't explicitly found
+    if (!myUser && otherUsers.length > 0) {
+      myUser = otherUsers[0];
+    }
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'graph-history-fixed').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'id-index-fix').slice(0, 7);
 
     return NextResponse.json({
       myUser,
       otherUsers,
+      userNames, // Export the display names map
       weekNumber: activeWeek,
       activeProps: contestPropIds,
       propMap,
