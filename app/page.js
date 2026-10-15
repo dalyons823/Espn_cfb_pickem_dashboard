@@ -43,10 +43,9 @@ function getRankTrend(initStr, liveStr) {
   return { symbol: '•', diff: '0', color: '#64748b' };
 }
 
-// Consistent colors for the graph based on username hash
-function getColorForUser(username) {
+function getColorForUser(entryId) {
   let hash = 0;
-  for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < entryId.length; i++) hash = entryId.charCodeAt(i) + ((hash << 5) - hash);
   const hues = [210, 150, 270, 25, 190, 340, 45, 120, 290];
   const hue = hues[Math.abs(hash) % hues.length];
   return `hsl(${hue}, 85%, 65%)`;
@@ -61,8 +60,7 @@ export default function MatrixDashboard() {
   const [timeAgo, setTimeAgo] = useState('Just now');
   const [isOffline, setIsOffline] = useState(false);
   
-  // Tab State & Chart State
-  const [activeTab, setActiveTab] = useState('matchups'); // 'matchups', 'leaderboard', 'trends'
+  const [activeTab, setActiveTab] = useState('matchups');
   const [hoveredUser, setHoveredUser] = useState(null);
 
   const fetchPicks = async (isBackground = false) => {
@@ -115,8 +113,13 @@ export default function MatrixDashboard() {
     if (typeof window !== 'undefined') localStorage.setItem('cfb_pinned_user', newUser);
   };
 
-  const { activeProps = [], propMap = {}, pickMap = {}, userYearlyScores = {}, userPeriodScores = {}, weekNumber = 6, buildHash = 'live' } = data || {};
-  const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
+  const { 
+    activeProps = [], propMap = {}, pickMap = {}, 
+    userYearlyScores = {}, userPeriodScores = {}, userNames = {}, 
+    weekNumber = 6, buildHash = 'live' 
+  } = data || {};
+  
+  const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean); // Array of entryIds
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
 
   const resolveTeamName = (pickObj, prId) => {
@@ -190,7 +193,6 @@ export default function MatrixDashboard() {
   const sortedByWeekly = useMemo(() => [...allUsers].sort((a, b) => (userStats[b]?.asItStands ?? 0) - (userStats[a]?.asItStands ?? 0)), [allUsers, userStats]);
   const sortedUnpinnedUsers = useMemo(() => [...unpinnedUsers].sort((a, b) => (userStats[b]?.totalWithWeek || 0) - (userStats[a]?.totalWithWeek || 0) || (userStats[b]?.asItStands || 0) - (userStats[a]?.asItStands || 0)), [unpinnedUsers, userStats]);
 
-  // Transform data for the Trends line chart
   const chartData = useMemo(() => {
     if (!allUsers.length) return [];
     const maxWeek = weekNumber;
@@ -203,7 +205,6 @@ export default function MatrixDashboard() {
       allUsers.forEach(u => {
         const ptsThisWeek = userPeriodScores[u]?.[w] || 0;
         cumulative[u] += ptsThisWeek;
-        // If it's the current week, blend in their live "As It Stands" score for a real-time jump
         if (w === weekNumber) {
            weekData[u] = userStats[u]?.totalWithWeek || cumulative[u];
         } else {
@@ -288,7 +289,7 @@ export default function MatrixDashboard() {
 
   const exportCSV = () => {
     const exportUsers = [pinnedUser, ...sortedUnpinnedUsers];
-    let csv = 'Matchup,' + exportUsers.map(u => `"${u.replace(/"/g, '""')} (${userStats[u]?.totalWithWeek || 0} pts)"`).join(',') + '\n';
+    let csv = 'Matchup,' + exportUsers.map(u => `"${(userNames[u] || u).replace(/"/g, '""')} (${userStats[u]?.totalWithWeek || 0} pts)"`).join(',') + '\n';
     activeProps.forEach((prId, gIdx) => {
       const propInfo = propMap[prId] || { title: `Game #${gIdx + 1}` };
       const row = [`"${propInfo.title.replace(/"/g, '""')}"`];
@@ -365,7 +366,7 @@ export default function MatrixDashboard() {
           </div>
           <span style={{ background: '#1e293b', color: '#f59e0b', border: '1px solid #78350f', borderRadius: '5px', padding: '2px 6px', fontSize: '10px', fontWeight: 800 }}>Wk {weekNumber}</span>
           <select value={pinnedUser} onChange={(e) => handlePinnedUserChange(e.target.value)} style={{ background: '#0f172a', color: '#f59e0b', border: '1px solid #d97706', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700, maxWidth: '120px' }}>
-            {allUsers.map(u => <option key={u} value={u}>{u}</option>)}
+            {allUsers.map(u => <option key={u} value={u}>{userNames[u] || u}</option>)}
           </select>
         </div>
 
@@ -409,12 +410,12 @@ export default function MatrixDashboard() {
               <tr style={{ position: 'sticky', top: 0, zIndex: 30 }}>
                 <th className="col-match" style={{ padding: '8px 8px', background: '#0f172a', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', color: '#93c5fd', fontWeight: 700 }}>Score / Matchup</th>
                 <th className="col-pinned" style={{ padding: '8px 4px', background: '#1a2234', borderBottom: '2px solid #f59e0b', borderRight: '2px solid #f59e0b', color: '#f59e0b', textAlign: 'center' }}>
-                  <div style={{ fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>⭐ {pinnedUser}</div>
+                  <div style={{ fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>⭐ {userNames[pinnedUser] || pinnedUser}</div>
                   <div style={{ fontSize: '10px', color: '#fcd34d', fontWeight: 700 }}>({pinnedStats.totalWithWeek} pts)</div>
                 </th>
                 {sortedUnpinnedUsers.map(u => (
                   <th key={u} className="col-other" style={{ padding: '8px 4px', background: '#0f172a', borderBottom: '2px solid #374151', borderRight: '1px solid #1f2937', whiteSpace: 'nowrap', color: '#e2e8f0', textAlign: 'center' }}>
-                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '76px' }}>{u}</div>
+                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '76px' }}>{userNames[u] || u}</div>
                     <div style={{ fontSize: '10px', color: '#93c5fd', fontWeight: 600 }}>({(userStats[u]?.totalWithWeek || 0)} pts)</div>
                   </th>
                 ))}
@@ -592,7 +593,7 @@ export default function MatrixDashboard() {
                           {uInit ? (
                             <>
                               <span style={{ color: '#64748b', fontWeight: 700, fontSize: '11px', marginRight: '4px' }}>{initRank}.</span>
-                              <span style={{ fontWeight: uInit === pinnedUser ? 800 : 600, color: uInit === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>{uInit === pinnedUser ? '⭐ ' : ''}{uInit}</span>
+                              <span style={{ fontWeight: uInit === pinnedUser ? 800 : 600, color: uInit === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>{uInit === pinnedUser ? '⭐ ' : ''}{userNames[uInit] || uInit}</span>
                               <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>({userStats[uInit]?.initialPoints ?? 0})</span>
                             </>
                           ) : '—'}
@@ -601,7 +602,7 @@ export default function MatrixDashboard() {
                           {uLive ? (
                             <>
                               <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '11px', marginRight: '4px' }}>{liveRank}.</span>
-                              <span style={{ fontWeight: uLive === pinnedUser ? 800 : 600, color: uLive === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>{uLive === pinnedUser ? '⭐ ' : ''}{uLive}</span>
+                              <span style={{ fontWeight: uLive === pinnedUser ? 800 : 600, color: uLive === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>{uLive === pinnedUser ? '⭐ ' : ''}{userNames[uLive] || uLive}</span>
                               {trend && <span style={{ fontSize: '10px', fontWeight: 800, color: trend.color, marginLeft: '4px' }}>{trend.symbol} {trend.diff}</span>}
                               <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>({userStats[uLive]?.totalWithWeek ?? 0})</span>
                             </>
@@ -611,7 +612,7 @@ export default function MatrixDashboard() {
                           {uWeek ? (
                             <>
                               <span style={{ color: '#f472b6', fontWeight: 700, fontSize: '11px', marginRight: '4px' }}>{weekRank}.</span>
-                              <span style={{ fontWeight: uWeek === pinnedUser ? 800 : 600, color: uWeek === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>{uWeek === pinnedUser ? '⭐ ' : ''}{uWeek}</span>
+                              <span style={{ fontWeight: uWeek === pinnedUser ? 800 : 600, color: uWeek === pinnedUser ? '#f59e0b' : '#e2e8f0' }}>{uWeek === pinnedUser ? '⭐ ' : ''}{userNames[uWeek] || uWeek}</span>
                               <span style={{ color: '#94a3b8', fontSize: '10px', marginLeft: '3px' }}>({userStats[uWeek]?.asItStands ?? 0})</span>
                             </>
                           ) : '—'}
@@ -655,6 +656,7 @@ export default function MatrixDashboard() {
                           key={u}
                           type="monotone"
                           dataKey={u}
+                          name={userNames[u] || u}
                           stroke={getColorForUser(u)}
                           strokeWidth={isHovered ? 4 : (isPinned ? 3 : 2)}
                           opacity={isDimmed ? 0.15 : 1}
@@ -695,7 +697,7 @@ export default function MatrixDashboard() {
                        }}
                      >
                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: color }}></span>
-                       {u === pinnedUser ? '⭐ ' : ''}{u}
+                       {u === pinnedUser ? '⭐ ' : ''}{userNames[u] || u}
                      </div>
                    );
                 })}
