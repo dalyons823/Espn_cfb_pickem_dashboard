@@ -8,7 +8,7 @@ export async function GET() {
     let activeWeek = 6;
     let activeProps = [];
 
-    // 1. Fetch challenge definitions using the authenticated make_picks view
+    // 1. Fetch challenge definitions using the make_picks view
     const chalRes = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
       { cache: 'no-store' }
@@ -17,14 +17,11 @@ export async function GET() {
     if (chalRes.ok) {
       const chalData = await chalRes.json();
       activeWeek = chalData.currentScoringPeriod?.id || 6;
-      
       const allProps = chalData.propositions || [];
       
-      // Filter exclusively for active week Confidence format games (ID 2)
       activeProps = allProps.filter(p => {
         const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
         if (Number(spId) !== Number(activeWeek)) return false;
-
         if (p.scoringFormatIds && Array.isArray(p.scoringFormatIds)) {
           return p.scoringFormatIds.includes(2) || p.scoringFormatIds.includes("2");
         }
@@ -32,7 +29,7 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with team logos and event URLs
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300)
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
@@ -228,11 +225,9 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group entries, attaching the mScoreboard view flag to force history extraction
-    let groupRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&_=${Date.now()}`,
-      { cache: 'no-store' }
-    );
+    // 4. Fetch group entries and history
+    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&_=${Date.now()}`;
+    const groupRes = await fetch(groupUrl, { cache: 'no-store' });
     const gData = groupRes.ok ? await groupRes.json() : {};
     const entries = gData.entries || [];
     const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
@@ -252,7 +247,6 @@ export async function GET() {
       if (typeof obj.points === 'number') return obj.points;
       if (typeof obj.overallScore === 'number') return obj.overallScore;
       if (typeof obj.totalPoints === 'number') return obj.totalPoints;
-      // Handle stragglers where numbers are passed as strings ("42.0")
       if (typeof obj === 'string') {
         const parsed = parseFloat(obj);
         if (!isNaN(parsed)) return parsed;
@@ -261,14 +255,12 @@ export async function GET() {
     }
 
     const entryPromises = entries.map(async (e) => {
-      const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
+      const userName = e.name || e.member?.displayName || `Entry ${String(e.id || '').slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
-      const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?_=${Date.now()}`,
-        { cache: 'no-store' }
-      );
+      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&_=${Date.now()}`;
+      const eRes = await fetch(entryUrl, { cache: 'no-store' });
       if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
 
@@ -278,8 +270,11 @@ export async function GET() {
 
       const periodScores = {};
       
-      // THE FIX: Hunt down the historical scores in all of ESPN's deeply nested potential paths
+      // THE FIX: Added your precise "scoreByPeriod" payload path to the hunter array
       const sources = [
+        eData.scoreByPeriod,              // <--- The exact key you found
+        e.scoreByPeriod,
+        eData.score?.scoreByPeriod, 
         eData.scores,
         eData.score?.scoresByScoringPeriod,
         eData.scoresByScoringPeriod,
@@ -359,7 +354,7 @@ export async function GET() {
 
     if (!myUser) myUser = "PosaParty";
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'graph-history-fix').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'graph-history-fixed').slice(0, 7);
 
     return NextResponse.json({
       myUser,
