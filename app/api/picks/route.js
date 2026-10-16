@@ -8,7 +8,7 @@ export async function GET() {
     let activeWeek = 6;
     let activeProps = [];
 
-    // 1. Fetch challenge definitions using the authenticated make_picks view
+    // 1. Fetch challenge definitions using the make_picks view
     const chalRes = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
       { cache: 'no-store' }
@@ -17,14 +17,11 @@ export async function GET() {
     if (chalRes.ok) {
       const chalData = await chalRes.json();
       activeWeek = chalData.currentScoringPeriod?.id || 6;
-      
       const allProps = chalData.propositions || [];
       
-      // Filter exclusively for active week Confidence format games (ID 2)
       activeProps = allProps.filter(p => {
         const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
         if (Number(spId) !== Number(activeWeek)) return false;
-
         if (p.scoringFormatIds && Array.isArray(p.scoringFormatIds)) {
           return p.scoringFormatIds.includes(2) || p.scoringFormatIds.includes("2");
         }
@@ -32,7 +29,7 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) with team logos and event URLs
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300)
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
@@ -228,16 +225,15 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group entries & picks
-    let groupRes = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&_=${Date.now()}`,
-      { cache: 'no-store' }
-    );
+    // 4. Fetch group entries and history
+    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&_=${Date.now()}`;
+    const groupRes = await fetch(groupUrl, { cache: 'no-store' });
     const gData = groupRes.ok ? await groupRes.json() : {};
     const entries = gData.entries || [];
     const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
 
-    const users = [];
+    const users = []; // Will now store entryIds instead of names
+    const userNames = {}; // NEW: Mapping entryId -> Display Name
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
@@ -245,26 +241,29 @@ export async function GET() {
     const userPeriodScores = {};
 
     function extractScore(obj) {
-      if (!obj) return null;
+      if (obj === null || obj === undefined) return null;
       if (typeof obj === 'number') return obj;
       if (typeof obj.value === 'number') return obj.value;
       if (typeof obj.score === 'number') return obj.score;
       if (typeof obj.points === 'number') return obj.points;
       if (typeof obj.overallScore === 'number') return obj.overallScore;
       if (typeof obj.totalPoints === 'number') return obj.totalPoints;
+      if (typeof obj === 'string') {
+        const parsed = parseFloat(obj);
+        if (!isNaN(parsed)) return parsed;
+      }
       return null;
     }
 
     const entryPromises = entries.map(async (e) => {
-      const userName = e.name || e.member?.displayName || `Entry ${e.id.slice(0, 6)}`;
+      const entryId = String(e.id);
+      const userName = e.name || e.member?.displayName || `Entry ${entryId.slice(0, 6)}`;
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
-      const eRes = await fetch(
-        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?_=${Date.now()}`,
-        { cache: 'no-store' }
-      );
-      if (!eRes.ok) return { userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
+      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&_=${Date.now()}`;
+      const eRes = await fetch(entryUrl, { cache: 'no-store' });
+      if (!eRes.ok) return { entryId, userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
 
       if (scoreVal === null) {
@@ -272,7 +271,20 @@ export async function GET() {
       }
 
       const periodScores = {};
-      const sources = [eData.scores, eData.scoresByScoringPeriod, e.scores, e.scoresByScoringPeriod];
+      const sources = [
+        eData.scoreByPeriod,              
+        e.scoreByPeriod,
+        eData.score?.scoreByPeriod, 
+        eData.scores,
+        eData.score?.scoresByScoringPeriod,
+        eData.scoresByScoringPeriod,
+        e.scores,
+        e.score?.scoresByScoringPeriod,
+        e.scoresByScoringPeriod,
+        eData.periodPoints,
+        e.periodPoints
+      ];
+
       for (const src of sources) {
         if (!src) continue;
         if (Array.isArray(src)) {
@@ -289,22 +301,24 @@ export async function GET() {
         }
       }
 
-      return { userName, picks: eData.picks || [], scoreVal: scoreVal || 0, periodScores };
+      return { entryId, userName, picks: eData.picks || [], scoreVal: scoreVal || 0, periodScores };
     });
 
     const settled = await Promise.all(entryPromises);
 
-    settled.forEach(({ userName, picks, scoreVal, periodScores }) => {
-      userYearlyScores[userName] = scoreVal;
-      userPeriodScores[userName] = periodScores || {};
+    settled.forEach(({ entryId, userName, picks, scoreVal, periodScores }) => {
+      userNames[entryId] = userName; // Save the mapping
+      userYearlyScores[entryId] = scoreVal;
+      userPeriodScores[entryId] = periodScores || {};
 
+      // Match PosaParty, but save their ID instead of their string name
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
-        myUser = userName;
+        myUser = entryId;
       } else {
-        otherUsers.push(userName);
+        otherUsers.push(entryId);
       }
-      users.push(userName);
-      pickMap[userName] = {};
+      users.push(entryId);
+      pickMap[entryId] = {};
 
       picks.forEach(p => {
         const propId = String(p.propositionId || '');
@@ -333,20 +347,24 @@ export async function GET() {
           else if (clean.endsWith('2')) side = 'home';
         }
 
-        pickMap[userName][propId] = {
+        pickMap[entryId][propId] = {
           side,
           pts: p.confidenceScore || null
         };
       });
     });
 
-    if (!myUser) myUser = "PosaParty";
+    // Fallback if PosaParty wasn't explicitly found
+    if (!myUser && otherUsers.length > 0) {
+      myUser = otherUsers[0];
+    }
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v8-logos-links').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'id-index-fix').slice(0, 7);
 
     return NextResponse.json({
       myUser,
       otherUsers,
+      userNames, // Export the display names map
       weekNumber: activeWeek,
       activeProps: contestPropIds,
       propMap,
