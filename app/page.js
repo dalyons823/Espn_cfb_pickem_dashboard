@@ -62,6 +62,7 @@ export default function MatrixDashboard() {
   
   const [activeTab, setActiveTab] = useState('matchups');
   const [hoveredUser, setHoveredUser] = useState(null);
+  const [chartMode, setChartMode] = useState('rank'); // 'rank' or 'points'
 
   const fetchPicks = async (isBackground = false) => {
     try {
@@ -119,7 +120,7 @@ export default function MatrixDashboard() {
     weekNumber = 6, buildHash = 'live' 
   } = data || {};
   
-  const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean); // Array of entryIds
+  const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
   const unpinnedUsers = allUsers.filter(u => u !== pinnedUser);
 
   const resolveTeamName = (pickObj, prId) => {
@@ -193,6 +194,7 @@ export default function MatrixDashboard() {
   const sortedByWeekly = useMemo(() => [...allUsers].sort((a, b) => (userStats[b]?.asItStands ?? 0) - (userStats[a]?.asItStands ?? 0)), [allUsers, userStats]);
   const sortedUnpinnedUsers = useMemo(() => [...unpinnedUsers].sort((a, b) => (userStats[b]?.totalWithWeek || 0) - (userStats[a]?.totalWithWeek || 0) || (userStats[b]?.asItStands || 0) - (userStats[a]?.asItStands || 0)), [unpinnedUsers, userStats]);
 
+  // THE REFACTOR: Dual-mode chart data (Rank vs Points)
   const chartData = useMemo(() => {
     if (!allUsers.length) return [];
     const maxWeek = weekNumber;
@@ -202,19 +204,34 @@ export default function MatrixDashboard() {
 
     for (let w = 1; w <= maxWeek; w++) {
       const weekData = { name: `Wk ${w}` };
+      const weekScores = {};
+
       allUsers.forEach(u => {
         const ptsThisWeek = userPeriodScores[u]?.[w] || 0;
         cumulative[u] += ptsThisWeek;
+        // Inject real-time current week projection
         if (w === weekNumber) {
-           weekData[u] = userStats[u]?.totalWithWeek || cumulative[u];
+           weekScores[u] = userStats[u]?.totalWithWeek || cumulative[u];
         } else {
-           weekData[u] = cumulative[u];
+           weekScores[u] = cumulative[u];
         }
       });
+
+      if (chartMode === 'points') {
+        allUsers.forEach(u => { weekData[u] = weekScores[u]; });
+      } else {
+        // Compute intra-week rankings
+        const sortedEntries = Object.entries(weekScores).sort((a, b) => b[1] - a[1]);
+        allUsers.forEach(u => {
+          const myScore = weekScores[u];
+          const firstIdx = sortedEntries.findIndex(e => e[1] === myScore);
+          weekData[u] = firstIdx + 1; // 1-based rank (Ties get same top rank)
+        });
+      }
       history.push(weekData);
     }
     return history;
-  }, [allUsers, userPeriodScores, weekNumber, userStats]);
+  }, [allUsers, userPeriodScores, weekNumber, userStats, chartMode]);
 
   if (loading) {
     return (
@@ -631,7 +648,22 @@ export default function MatrixDashboard() {
           <div style={{ padding: '24px 16px 48px 16px', maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <span style={{ fontSize: '15px', fontWeight: 900, color: '#f8fafc', letterSpacing: '0.04em' }}>SEASON TRENDS</span>
-              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Cumulative Points</span>
+              
+              {/* THE REFACTOR: Rank vs Points Toggle */}
+              <div style={{ display: 'flex', gap: '4px', background: 'rgba(30,41,59,0.5)', padding: '4px', borderRadius: '8px', border: '1px solid #1f2937' }}>
+                <button 
+                  onClick={() => setChartMode('rank')}
+                  style={{ padding: '4px 12px', fontSize: '11px', fontWeight: 800, borderRadius: '4px', background: chartMode === 'rank' ? '#38bdf8' : 'transparent', color: chartMode === 'rank' ? '#0f172a' : '#94a3b8', border: 'none', cursor: 'pointer', transition: 'all 0.2s' }}
+                >
+                  Rank
+                </button>
+                <button 
+                  onClick={() => setChartMode('points')}
+                  style={{ padding: '4px 12px', fontSize: '11px', fontWeight: 800, borderRadius: '4px', background: chartMode === 'points' ? '#38bdf8' : 'transparent', color: chartMode === 'points' ? '#0f172a' : '#94a3b8', border: 'none', cursor: 'pointer', transition: 'all 0.2s' }}
+                >
+                  Points
+                </button>
+              </div>
             </div>
             
             <div style={{ background: 'rgba(15, 23, 42, 0.6)', border: '1px solid #1f2937', borderRadius: '12px', padding: '20px 10px 10px 0', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
@@ -640,12 +672,26 @@ export default function MatrixDashboard() {
                   <LineChart data={chartData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
                     <XAxis dataKey="name" stroke="#64748b" tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} tickLine={false} axisLine={false} dy={10} />
-                    <YAxis stroke="#64748b" tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} tickLine={false} axisLine={false} />
+                    
+                    {/* THE REFACTOR: Dynamic Y-Axis Reversal for Rank Mode */}
+                    <YAxis 
+                      stroke="#64748b" 
+                      tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} 
+                      tickLine={false} 
+                      axisLine={false}
+                      reversed={chartMode === 'rank'}
+                      domain={chartMode === 'rank' ? [1, allUsers.length] : ['auto', 'auto']}
+                      tickFormatter={(val) => chartMode === 'rank' ? `#${val}` : val}
+                      interval="preserveStartEnd"
+                      minTickGap={10}
+                    />
+                    
                     <Tooltip 
                       contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', boxShadow: '0 8px 16px rgba(0,0,0,0.8)' }}
                       itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
                       labelStyle={{ color: '#94a3b8', fontSize: '11px', marginBottom: '4px', fontWeight: 800 }}
                       cursor={{ stroke: 'rgba(255,255,255,0.05)', strokeWidth: 2 }}
+                      formatter={(value) => [chartMode === 'rank' ? `#${value}` : `${value} pts`, undefined]}
                     />
                     {allUsers.map(u => {
                       const isHovered = hoveredUser === u;
