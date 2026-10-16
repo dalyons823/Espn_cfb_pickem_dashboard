@@ -12,18 +12,32 @@ export async function GET(request) {
     let currentWeek = 6;
     let activeProps = [];
 
-    // 1. Fetch challenge definitions using the make_picks view
-    const chalRes = await fetch(
+    // 1. Fetch current challenge definitions to find the true current week
+    const chalResCurrent = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
       { cache: 'no-store' }
     );
 
-    if (chalRes.ok) {
-      const chalData = await chalRes.json();
-      currentWeek = chalData.currentScoringPeriod?.id || 6;
+    if (chalResCurrent.ok) {
+      const chalDataCurrent = await chalResCurrent.json();
+      currentWeek = chalDataCurrent.currentScoringPeriod?.id || 6;
       activeWeek = requestedWeek ? Number(requestedWeek) : currentWeek;
       
-      const allProps = chalData.propositions || [];
+      let allProps = [];
+
+      // THE FIX: If looking at a past week, fetch that specific week's propositions
+      if (activeWeek === currentWeek) {
+        allProps = chalDataCurrent.propositions || [];
+      } else {
+        const chalResPast = await fetch(
+          `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&scoringPeriodId=${activeWeek}&_=${Date.now()}`,
+          { cache: 'no-store' }
+        );
+        if (chalResPast.ok) {
+          const pastData = await chalResPast.json();
+          allProps = pastData.propositions || [];
+        }
+      }
       
       activeProps = allProps.filter(p => {
         const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
@@ -35,7 +49,7 @@ export async function GET(request) {
       });
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300)
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) for the target week
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
@@ -231,8 +245,8 @@ export async function GET(request) {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group entries and history
-    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&_=${Date.now()}`;
+    // 4. THE FIX: Fetch group entries appending scoringPeriodId to force historical picks
+    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
     const groupRes = await fetch(groupUrl, { cache: 'no-store' });
     const gData = groupRes.ok ? await groupRes.json() : {};
     const entries = gData.entries || [];
@@ -267,7 +281,8 @@ export async function GET(request) {
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
-      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&_=${Date.now()}`;
+      // THE FIX: Appended scoringPeriodId to the individual entry fetch
+      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
       const eRes = await fetch(entryUrl, { cache: 'no-store' });
       if (!eRes.ok) return { entryId, userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
@@ -363,14 +378,14 @@ export async function GET(request) {
       myUser = otherUsers[0];
     }
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v9-history-stats').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v10-time-travel').slice(0, 7);
 
     return NextResponse.json({
       myUser,
       otherUsers,
       userNames, 
       weekNumber: activeWeek,
-      currentWeek: currentWeek, // Pass actual present week for the dropdown
+      currentWeek: currentWeek, 
       activeProps: contestPropIds,
       propMap,
       pickMap,
