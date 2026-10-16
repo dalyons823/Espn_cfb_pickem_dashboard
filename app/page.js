@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ComposedChart } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const ABBR_FALLBACKS = {
   'alabama': 'BAMA', 'mississippi state': 'MSST', 'west virginia': 'WVU', 'iowa state': 'ISU',
@@ -64,7 +64,6 @@ export default function MatrixDashboard() {
   const [hoveredUser, setHoveredUser] = useState(null);
   const [chartMode, setChartMode] = useState('rank');
 
-  // We track the selected target week independently. Null means "current week".
   const [selectedWeekParam, setSelectedWeekParam] = useState(null);
 
   const fetchPicks = async (isBackground = false, targetWeek = null) => {
@@ -100,7 +99,6 @@ export default function MatrixDashboard() {
     fetchPicks();
   }, []);
 
-  // Set up polling that respects the selected week
   const weekRef = useRef(selectedWeekParam);
   useEffect(() => {
     weekRef.current = selectedWeekParam;
@@ -164,7 +162,6 @@ export default function MatrixDashboard() {
     } catch (e) { return 'Upcoming'; }
   };
 
-  // REFACTORED USER STATS: Calculates historical standings cleanly for the selected week.
   const userStats = useMemo(() => {
     const stats = {};
     allUsers.forEach(u => {
@@ -186,7 +183,6 @@ export default function MatrixDashboard() {
       const asItStands = earnedPts + liveLeadingPts;
       const maxPossible = 55 - weekLostPts;
       
-      // Calculate true score up to the START of the selected week
       let pastTotal = 0;
       for (let w = 1; w < weekNumber; w++) {
         pastTotal += (userPeriodScores[u]?.[w] || 0);
@@ -217,7 +213,7 @@ export default function MatrixDashboard() {
 
   const chartData = useMemo(() => {
     if (!allUsers.length) return [];
-    const maxWeek = currentWeek; // Use currentWeek so chart always shows full season
+    const maxWeek = currentWeek; 
     const history = [];
     const cumulative = {};
     allUsers.forEach(u => cumulative[u] = 0);
@@ -229,7 +225,6 @@ export default function MatrixDashboard() {
       allUsers.forEach(u => {
         const ptsThisWeek = userPeriodScores[u]?.[w] || 0;
         cumulative[u] += ptsThisWeek;
-        // Inject real-time current week projection if viewing the present
         if (w === currentWeek && weekNumber === currentWeek) {
            weekScores[u] = userStats[u]?.totalWithWeek || cumulative[u];
         } else {
@@ -252,35 +247,44 @@ export default function MatrixDashboard() {
     return history;
   }, [allUsers, userPeriodScores, weekNumber, currentWeek, userStats, chartMode]);
 
-  // REFACTORED NEW TAB: Group Analytics (Avg & StdDev)
+  // REFACTORED NEW TAB: Throws out '0' scores, calculates Max, Mean, Median, Min
   const groupStatsData = useMemo(() => {
     if (!allUsers.length) return [];
     const stats = [];
     const maxWeek = currentWeek;
 
     for (let w = 1; w <= maxWeek; w++) {
-      const scoresThisWeek = allUsers.map(u => {
-        // If viewing the current live week, blend in their live 'As It Stands'
+      let scoresThisWeek = allUsers.map(u => {
         if (w === currentWeek && weekNumber === currentWeek) return userStats[u]?.asItStands || 0;
         return userPeriodScores[u]?.[w] || 0;
       });
 
-      const sum = scoresThisWeek.reduce((acc, val) => acc + val, 0);
-      const avg = sum / scoresThisWeek.length;
+      // Filter out any zeroes so dead entries don't tank the averages
+      scoresThisWeek = scoresThisWeek.filter(score => score > 0);
+
+      if (scoresThisWeek.length === 0) {
+        stats.push({ week: w, name: `Wk ${w}`, max: 0, mean: 0, median: 0, min: 0 });
+        continue;
+      }
+
+      const max = Math.max(...scoresThisWeek);
+      const min = Math.min(...scoresThisWeek);
       
-      const squaredDiffs = scoresThisWeek.map(val => Math.pow(val - avg, 2));
-      const avgSquareDiff = squaredDiffs.reduce((acc, val) => acc + val, 0) / scoresThisWeek.length;
-      const stdDev = Math.sqrt(avgSquareDiff);
+      const sum = scoresThisWeek.reduce((acc, val) => acc + val, 0);
+      const mean = sum / scoresThisWeek.length;
+      
+      // Calculate Median
+      scoresThisWeek.sort((a, b) => a - b);
+      const mid = Math.floor(scoresThisWeek.length / 2);
+      const median = scoresThisWeek.length % 2 !== 0 ? scoresThisWeek[mid] : (scoresThisWeek[mid - 1] + scoresThisWeek[mid]) / 2;
 
       stats.push({
         week: w,
         name: `Wk ${w}`,
-        avg: parseFloat(avg.toFixed(1)),
-        stdDev: parseFloat(stdDev.toFixed(1)),
-        min: Math.min(...scoresThisWeek),
-        max: Math.max(...scoresThisWeek),
-        rangeBot: parseFloat(Math.max(0, avg - stdDev).toFixed(1)),
-        rangeTop: parseFloat((avg + stdDev).toFixed(1))
+        max: parseFloat(max.toFixed(1)),
+        mean: parseFloat(mean.toFixed(1)),
+        median: parseFloat(median.toFixed(1)),
+        min: parseFloat(min.toFixed(1))
       });
     }
     return stats;
@@ -434,7 +438,6 @@ export default function MatrixDashboard() {
             </div>
           </div>
           
-          {/* THE REFACTOR: Interactive Week Selector */}
           <select 
             value={weekNumber} 
             onChange={(e) => handleWeekChange(e.target.value)} 
@@ -775,7 +778,6 @@ export default function MatrixDashboard() {
                 </ResponsiveContainer>
               </div>
 
-              {/* Custom Interactive Legend */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '20px', padding: '0 10px', justifyContent: 'center' }}>
                 {allUsers.map(u => {
                    const color = getColorForUser(u);
@@ -816,19 +818,18 @@ export default function MatrixDashboard() {
           <div style={{ padding: '24px 16px 48px 16px', maxWidth: '800px', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <span style={{ fontSize: '15px', fontWeight: 900, color: '#f8fafc', letterSpacing: '0.04em' }}>GROUP ANALYTICS</span>
-              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Averages & Variance</span>
+              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Weekly Math</span>
             </div>
 
-            {/* Stats Table */}
             <div style={{ background: '#0e1626', border: '1px solid #1f2937', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', marginBottom: '32px' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'center' }}>
                 <thead>
                   <tr style={{ background: '#1a2234', borderBottom: '2px solid #374151' }}>
                     <th style={{ padding: '10px 8px', color: '#94a3b8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Week</th>
-                    <th style={{ padding: '10px 8px', color: '#38bdf8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Group Avg</th>
-                    <th style={{ padding: '10px 8px', color: '#a78bfa', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Std Dev (±)</th>
-                    <th style={{ padding: '10px 8px', color: '#22c55e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>High Score</th>
-                    <th style={{ padding: '10px 8px', color: '#ef4444', fontWeight: 700 }}>Low Score</th>
+                    <th style={{ padding: '10px 8px', color: '#22c55e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Max</th>
+                    <th style={{ padding: '10px 8px', color: '#38bdf8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Mean</th>
+                    <th style={{ padding: '10px 8px', color: '#a78bfa', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Median</th>
+                    <th style={{ padding: '10px 8px', color: '#ef4444', fontWeight: 700 }}>Min</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -837,10 +838,10 @@ export default function MatrixDashboard() {
                     return (
                       <tr key={stat.week} style={{ background: rowBg, borderBottom: '1px solid #1e293b' }}>
                         <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#e2e8f0', fontWeight: 700 }}>{stat.week}</td>
-                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#38bdf8', fontWeight: 800 }}>{stat.avg}</td>
-                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#a78bfa', fontWeight: 600 }}>±{stat.stdDev}</td>
-                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#22c55e', fontWeight: 700 }}>{stat.max}</td>
-                        <td style={{ padding: '8px 8px', color: '#ef4444', fontWeight: 700 }}>{stat.min}</td>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#22c55e', fontWeight: 800 }}>{stat.max}</td>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#38bdf8', fontWeight: 800 }}>{stat.mean}</td>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#a78bfa', fontWeight: 800 }}>{stat.median}</td>
+                        <td style={{ padding: '8px 8px', color: '#ef4444', fontWeight: 800 }}>{stat.min}</td>
                       </tr>
                     );
                   })}
@@ -848,34 +849,30 @@ export default function MatrixDashboard() {
               </table>
             </div>
 
-            {/* Weekly Variance Chart */}
             <div style={{ background: 'rgba(15, 23, 42, 0.6)', border: '1px solid #1f2937', borderRadius: '12px', padding: '20px 10px 10px 0', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
               <div style={{ width: '100%', height: '300px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={groupStatsData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
+                  <LineChart data={groupStatsData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
                     <XAxis dataKey="name" stroke="#64748b" tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} tickLine={false} axisLine={false} dy={10} />
                     <YAxis stroke="#64748b" tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} tickLine={false} axisLine={false} />
                     <Tooltip 
                       contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', boxShadow: '0 8px 16px rgba(0,0,0,0.8)' }}
                       labelStyle={{ color: '#94a3b8', fontSize: '11px', marginBottom: '4px', fontWeight: 800 }}
-                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                      cursor={{ stroke: 'rgba(255,255,255,0.05)' }}
                     />
-                    
-                    {/* The Shaded Area represents 1 Standard Deviation around the Average */}
-                    <Area type="monotone" dataKey="rangeTop" stroke="none" fill="#a78bfa" fillOpacity={0.15} name="Upper Variance" />
-                    <Area type="monotone" dataKey="rangeBot" stroke="none" fill="#0f172a" fillOpacity={1} name="Lower Variance (Hidden)" style={{ display: 'none' }} />
-                    
-                    {/* The solid line represents the true group average */}
-                    <Line type="monotone" dataKey="avg" stroke="#38bdf8" strokeWidth={3} dot={{ r: 4, fill: '#38bdf8', strokeWidth: 0 }} name="Group Average" />
-                  </ComposedChart>
+                    <Line type="monotone" dataKey="max" stroke="#22c55e" strokeWidth={3} name="Max Score" dot={{ r: 4, fill: '#22c55e', strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="mean" stroke="#38bdf8" strokeWidth={3} name="Mean Average" dot={{ r: 4, fill: '#38bdf8', strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="median" stroke="#a78bfa" strokeWidth={3} name="Median" strokeDasharray="5 5" dot={{ r: 4, fill: '#a78bfa', strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="min" stroke="#ef4444" strokeWidth={3} name="Min Score" dot={{ r: 4, fill: '#ef4444', strokeWidth: 0 }} />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
-              <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>
-                <span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#38bdf8', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>
-                Group Average
-                <span style={{ display: 'inline-block', width: '10px', height: '10px', background: 'rgba(167, 139, 250, 0.3)', borderRadius: '2px', marginLeft: '16px', marginRight: '6px', verticalAlign: '-1px' }}></span>
-                ±1 Standard Deviation
+              <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '11px', color: '#94a3b8', fontWeight: 600, display: 'flex', justifyContent: 'center', gap: '16px' }}>
+                <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#22c55e', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>Max</span>
+                <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#38bdf8', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>Mean</span>
+                <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#a78bfa', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>Median</span>
+                <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#ef4444', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>Min</span>
               </div>
             </div>
           </div>
