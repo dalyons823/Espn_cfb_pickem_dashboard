@@ -3,9 +3,13 @@ import { NextResponse } from 'next/server';
 const CHALLENGE_SLUG = "college-football-pickem-2026";
 const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
-export async function GET() {
+export async function GET(request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const requestedWeek = searchParams.get('week');
+    
     let activeWeek = 6;
+    let currentWeek = 6;
     let activeProps = [];
 
     // 1. Fetch challenge definitions using the make_picks view
@@ -16,7 +20,9 @@ export async function GET() {
 
     if (chalRes.ok) {
       const chalData = await chalRes.json();
-      activeWeek = chalData.currentScoringPeriod?.id || 6;
+      currentWeek = chalData.currentScoringPeriod?.id || 6;
+      activeWeek = requestedWeek ? Number(requestedWeek) : currentWeek;
+      
       const allProps = chalData.propositions || [];
       
       activeProps = allProps.filter(p => {
@@ -232,8 +238,8 @@ export async function GET() {
     const entries = gData.entries || [];
     const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
 
-    const users = []; // Will now store entryIds instead of names
-    const userNames = {}; // NEW: Mapping entryId -> Display Name
+    const users = []; 
+    const userNames = {}; 
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
@@ -307,11 +313,10 @@ export async function GET() {
     const settled = await Promise.all(entryPromises);
 
     settled.forEach(({ entryId, userName, picks, scoreVal, periodScores }) => {
-      userNames[entryId] = userName; // Save the mapping
+      userNames[entryId] = userName; 
       userYearlyScores[entryId] = scoreVal;
       userPeriodScores[entryId] = periodScores || {};
 
-      // Match PosaParty, but save their ID instead of their string name
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
         myUser = entryId;
       } else {
@@ -354,18 +359,18 @@ export async function GET() {
       });
     });
 
-    // Fallback if PosaParty wasn't explicitly found
     if (!myUser && otherUsers.length > 0) {
       myUser = otherUsers[0];
     }
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'id-index-fix').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v9-history-stats').slice(0, 7);
 
     return NextResponse.json({
       myUser,
       otherUsers,
-      userNames, // Export the display names map
+      userNames, 
       weekNumber: activeWeek,
+      currentWeek: currentWeek, // Pass actual present week for the dropdown
       activeProps: contestPropIds,
       propMap,
       pickMap,
