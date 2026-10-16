@@ -247,7 +247,7 @@ export default function MatrixDashboard() {
     return history;
   }, [allUsers, userPeriodScores, weekNumber, currentWeek, userStats, chartMode]);
 
-  // REFACTORED NEW TAB: Throws out '0' scores, calculates Max, Mean, Median, Min
+  // REFACTORED GROUP STATS: Includes dynamically extracted Pinned User score
   const groupStatsData = useMemo(() => {
     if (!allUsers.length) return [];
     const stats = [];
@@ -259,11 +259,21 @@ export default function MatrixDashboard() {
         return userPeriodScores[u]?.[w] || 0;
       });
 
-      // Filter out any zeroes so dead entries don't tank the averages
+      // Extract specific pinned user score
+      let pinnedScore = 0;
+      if (pinnedUser) {
+        if (w === currentWeek && weekNumber === currentWeek) {
+          pinnedScore = userStats[pinnedUser]?.asItStands || 0;
+        } else {
+          pinnedScore = userPeriodScores[pinnedUser]?.[w] || 0;
+        }
+      }
+
+      // Filter out zeroes
       scoresThisWeek = scoresThisWeek.filter(score => score > 0);
 
       if (scoresThisWeek.length === 0) {
-        stats.push({ week: w, name: `Wk ${w}`, max: 0, mean: 0, median: 0, min: 0 });
+        stats.push({ week: w, name: `Wk ${w}`, max: 0, mean: 0, median: 0, min: 0, pinnedScore });
         continue;
       }
 
@@ -273,10 +283,9 @@ export default function MatrixDashboard() {
       const sum = scoresThisWeek.reduce((acc, val) => acc + val, 0);
       const mean = sum / scoresThisWeek.length;
       
-      // Calculate Median
-      scoresThisWeek.sort((a, b) => a - b);
-      const mid = Math.floor(scoresThisWeek.length / 2);
-      const median = scoresThisWeek.length % 2 !== 0 ? scoresThisWeek[mid] : (scoresThisWeek[mid - 1] + scoresThisWeek[mid]) / 2;
+      const sortedScores = [...scoresThisWeek].sort((a, b) => a - b);
+      const mid = Math.floor(sortedScores.length / 2);
+      const median = sortedScores.length % 2 !== 0 ? sortedScores[mid] : (sortedScores[mid - 1] + sortedScores[mid]) / 2;
 
       stats.push({
         week: w,
@@ -284,11 +293,12 @@ export default function MatrixDashboard() {
         max: parseFloat(max.toFixed(1)),
         mean: parseFloat(mean.toFixed(1)),
         median: parseFloat(median.toFixed(1)),
-        min: parseFloat(min.toFixed(1))
+        min: parseFloat(min.toFixed(1)),
+        pinnedScore: parseFloat(pinnedScore.toFixed(1)) // Included for line chart
       });
     }
     return stats;
-  }, [allUsers, userPeriodScores, currentWeek, weekNumber, userStats]);
+  }, [allUsers, userPeriodScores, currentWeek, weekNumber, userStats, pinnedUser]);
 
   if (loading) {
     return (
@@ -392,6 +402,7 @@ export default function MatrixDashboard() {
 
   const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, initialPoints: 0 };
   const pinnedTrend = getRankTrend(initialRanks[pinnedUser], liveRanks[pinnedUser]);
+  const pinnedColor = getColorForUser(pinnedUser);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#080c14', position: 'relative' }}>
@@ -813,7 +824,7 @@ export default function MatrixDashboard() {
           </div>
         )}
 
-        {/* TAB 4: GROUP ANALYTICS (NEW) */}
+        {/* TAB 4: GROUP ANALYTICS */}
         {activeTab === 'stats' && (
           <div style={{ padding: '24px 16px 48px 16px', maxWidth: '800px', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -826,6 +837,7 @@ export default function MatrixDashboard() {
                 <thead>
                   <tr style={{ background: '#1a2234', borderBottom: '2px solid #374151' }}>
                     <th style={{ padding: '10px 8px', color: '#94a3b8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Week</th>
+                    <th style={{ padding: '10px 8px', color: pinnedColor, fontWeight: 700, borderRight: '1px solid #1f2937' }}>{userNames[pinnedUser] || 'Selected'}</th>
                     <th style={{ padding: '10px 8px', color: '#22c55e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Max</th>
                     <th style={{ padding: '10px 8px', color: '#38bdf8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Mean</th>
                     <th style={{ padding: '10px 8px', color: '#a78bfa', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Median</th>
@@ -838,6 +850,7 @@ export default function MatrixDashboard() {
                     return (
                       <tr key={stat.week} style={{ background: rowBg, borderBottom: '1px solid #1e293b' }}>
                         <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#e2e8f0', fontWeight: 700 }}>{stat.week}</td>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: pinnedColor, fontWeight: 800 }}>{stat.pinnedScore}</td>
                         <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#22c55e', fontWeight: 800 }}>{stat.max}</td>
                         <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#38bdf8', fontWeight: 800 }}>{stat.mean}</td>
                         <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#a78bfa', fontWeight: 800 }}>{stat.median}</td>
@@ -861,14 +874,16 @@ export default function MatrixDashboard() {
                       labelStyle={{ color: '#94a3b8', fontSize: '11px', marginBottom: '4px', fontWeight: 800 }}
                       cursor={{ stroke: 'rgba(255,255,255,0.05)' }}
                     />
-                    <Line type="monotone" dataKey="max" stroke="#22c55e" strokeWidth={3} name="Max Score" dot={{ r: 4, fill: '#22c55e', strokeWidth: 0 }} />
-                    <Line type="monotone" dataKey="mean" stroke="#38bdf8" strokeWidth={3} name="Mean Average" dot={{ r: 4, fill: '#38bdf8', strokeWidth: 0 }} />
-                    <Line type="monotone" dataKey="median" stroke="#a78bfa" strokeWidth={3} name="Median" strokeDasharray="5 5" dot={{ r: 4, fill: '#a78bfa', strokeWidth: 0 }} />
-                    <Line type="monotone" dataKey="min" stroke="#ef4444" strokeWidth={3} name="Min Score" dot={{ r: 4, fill: '#ef4444', strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="pinnedScore" stroke={pinnedColor} strokeWidth={4} name={userNames[pinnedUser] || pinnedUser} dot={{ r: 5, fill: pinnedColor, strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="max" stroke="#22c55e" strokeWidth={2} name="Max Score" dot={{ r: 3, fill: '#22c55e', strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="mean" stroke="#38bdf8" strokeWidth={2} name="Mean Average" dot={{ r: 3, fill: '#38bdf8', strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="median" stroke="#a78bfa" strokeWidth={2} name="Median" strokeDasharray="5 5" dot={{ r: 3, fill: '#a78bfa', strokeWidth: 0 }} />
+                    <Line type="monotone" dataKey="min" stroke="#ef4444" strokeWidth={2} name="Min Score" dot={{ r: 3, fill: '#ef4444', strokeWidth: 0 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-              <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '11px', color: '#94a3b8', fontWeight: 600, display: 'flex', justifyContent: 'center', gap: '16px' }}>
+              <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '11px', color: '#94a3b8', fontWeight: 600, display: 'flex', justifyContent: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: pinnedColor, borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>⭐ {userNames[pinnedUser] || pinnedUser}</span>
                 <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#22c55e', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>Max</span>
                 <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#38bdf8', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>Mean</span>
                 <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#a78bfa', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>Median</span>
