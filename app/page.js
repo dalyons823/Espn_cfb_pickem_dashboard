@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ComposedChart } from 'recharts';
 
 const ABBR_FALLBACKS = {
   'alabama': 'BAMA', 'mississippi state': 'MSST', 'west virginia': 'WVU', 'iowa state': 'ISU',
@@ -62,12 +62,16 @@ export default function MatrixDashboard() {
   
   const [activeTab, setActiveTab] = useState('matchups');
   const [hoveredUser, setHoveredUser] = useState(null);
-  const [chartMode, setChartMode] = useState('rank'); // 'rank' or 'points'
+  const [chartMode, setChartMode] = useState('rank');
 
-  const fetchPicks = async (isBackground = false) => {
+  // We track the selected target week independently. Null means "current week".
+  const [selectedWeekParam, setSelectedWeekParam] = useState(null);
+
+  const fetchPicks = async (isBackground = false, targetWeek = null) => {
     try {
       if (!isBackground) setLoading(true);
-      const res = await fetch(`/api/picks?_=${Date.now()}`);
+      const url = `/api/picks?_=${Date.now()}${targetWeek ? `&week=${targetWeek}` : ''}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to load picks');
       const json = await res.json();
       setData(json);
@@ -94,7 +98,18 @@ export default function MatrixDashboard() {
 
   useEffect(() => {
     fetchPicks();
-    const refreshInterval = setInterval(() => fetchPicks(true), 45000);
+  }, []);
+
+  // Set up polling that respects the selected week
+  const weekRef = useRef(selectedWeekParam);
+  useEffect(() => {
+    weekRef.current = selectedWeekParam;
+  }, [selectedWeekParam]);
+
+  useEffect(() => {
+    const refreshInterval = setInterval(() => {
+      fetchPicks(true, weekRef.current);
+    }, 45000);
     return () => clearInterval(refreshInterval);
   }, []);
 
@@ -114,10 +129,15 @@ export default function MatrixDashboard() {
     if (typeof window !== 'undefined') localStorage.setItem('cfb_pinned_user', newUser);
   };
 
+  const handleWeekChange = (w) => {
+    setSelectedWeekParam(w);
+    fetchPicks(false, w);
+  };
+
   const { 
     activeProps = [], propMap = {}, pickMap = {}, 
-    userYearlyScores = {}, userPeriodScores = {}, userNames = {}, 
-    weekNumber = 6, buildHash = 'live' 
+    userPeriodScores = {}, userNames = {}, 
+    weekNumber = 6, currentWeek = 6, buildHash = 'live' 
   } = data || {};
   
   const allUsers = [data?.myUser, ...(data?.otherUsers || [])].filter(Boolean);
@@ -144,6 +164,7 @@ export default function MatrixDashboard() {
     } catch (e) { return 'Upcoming'; }
   };
 
+  // REFACTORED USER STATS: Calculates historical standings cleanly for the selected week.
   const userStats = useMemo(() => {
     const stats = {};
     allUsers.forEach(u => {
@@ -164,20 +185,20 @@ export default function MatrixDashboard() {
 
       const asItStands = earnedPts + liveLeadingPts;
       const maxPossible = 55 - weekLostPts;
-      const yearlyTotal = userYearlyScores?.[u] ?? 0;
+      
+      // Calculate true score up to the START of the selected week
+      let pastTotal = 0;
+      for (let w = 1; w < weekNumber; w++) {
+        pastTotal += (userPeriodScores[u]?.[w] || 0);
+      }
 
-      let alreadyCredited = 0;
-      if (userPeriodScores?.[u]?.[weekNumber] !== undefined) alreadyCredited = userPeriodScores[u][weekNumber];
-      else if (isWeekOver) alreadyCredited = earnedPts;
+      const initialPoints = pastTotal;
+      const totalWithWeek = pastTotal + asItStands;
 
-      const initialPoints = Math.max(0, yearlyTotal - alreadyCredited);
-      const pendingPoints = Math.max(0, asItStands - alreadyCredited);
-      const totalWithWeek = yearlyTotal + pendingPoints;
-
-      stats[u] = { earnedPts, asItStands, maxPossible, yearlyTotal, initialPoints, totalWithWeek, liveLeadingPts };
+      stats[u] = { earnedPts, asItStands, maxPossible, initialPoints, totalWithWeek, liveLeadingPts };
     });
     return stats;
-  }, [allUsers, activeProps, pickMap, propMap, userYearlyScores, userPeriodScores, weekNumber, isWeekOver]);
+  }, [allUsers, activeProps, pickMap, propMap, userPeriodScores, weekNumber]);
 
   const { initialRanks, liveRanks, weeklyRanks } = useMemo(() => {
     const initScores = {}, liveScores = {}, weekScores = {};
@@ -194,10 +215,9 @@ export default function MatrixDashboard() {
   const sortedByWeekly = useMemo(() => [...allUsers].sort((a, b) => (userStats[b]?.asItStands ?? 0) - (userStats[a]?.asItStands ?? 0)), [allUsers, userStats]);
   const sortedUnpinnedUsers = useMemo(() => [...unpinnedUsers].sort((a, b) => (userStats[b]?.totalWithWeek || 0) - (userStats[a]?.totalWithWeek || 0) || (userStats[b]?.asItStands || 0) - (userStats[a]?.asItStands || 0)), [unpinnedUsers, userStats]);
 
-  // THE REFACTOR: Dual-mode chart data (Rank vs Points)
   const chartData = useMemo(() => {
     if (!allUsers.length) return [];
-    const maxWeek = weekNumber;
+    const maxWeek = currentWeek; // Use currentWeek so chart always shows full season
     const history = [];
     const cumulative = {};
     allUsers.forEach(u => cumulative[u] = 0);
@@ -209,8 +229,8 @@ export default function MatrixDashboard() {
       allUsers.forEach(u => {
         const ptsThisWeek = userPeriodScores[u]?.[w] || 0;
         cumulative[u] += ptsThisWeek;
-        // Inject real-time current week projection
-        if (w === weekNumber) {
+        // Inject real-time current week projection if viewing the present
+        if (w === currentWeek && weekNumber === currentWeek) {
            weekScores[u] = userStats[u]?.totalWithWeek || cumulative[u];
         } else {
            weekScores[u] = cumulative[u];
@@ -220,25 +240,58 @@ export default function MatrixDashboard() {
       if (chartMode === 'points') {
         allUsers.forEach(u => { weekData[u] = weekScores[u]; });
       } else {
-        // Compute intra-week rankings
         const sortedEntries = Object.entries(weekScores).sort((a, b) => b[1] - a[1]);
         allUsers.forEach(u => {
           const myScore = weekScores[u];
           const firstIdx = sortedEntries.findIndex(e => e[1] === myScore);
-          weekData[u] = firstIdx + 1; // 1-based rank (Ties get same top rank)
+          weekData[u] = firstIdx + 1;
         });
       }
       history.push(weekData);
     }
     return history;
-  }, [allUsers, userPeriodScores, weekNumber, userStats, chartMode]);
+  }, [allUsers, userPeriodScores, weekNumber, currentWeek, userStats, chartMode]);
+
+  // REFACTORED NEW TAB: Group Analytics (Avg & StdDev)
+  const groupStatsData = useMemo(() => {
+    if (!allUsers.length) return [];
+    const stats = [];
+    const maxWeek = currentWeek;
+
+    for (let w = 1; w <= maxWeek; w++) {
+      const scoresThisWeek = allUsers.map(u => {
+        // If viewing the current live week, blend in their live 'As It Stands'
+        if (w === currentWeek && weekNumber === currentWeek) return userStats[u]?.asItStands || 0;
+        return userPeriodScores[u]?.[w] || 0;
+      });
+
+      const sum = scoresThisWeek.reduce((acc, val) => acc + val, 0);
+      const avg = sum / scoresThisWeek.length;
+      
+      const squaredDiffs = scoresThisWeek.map(val => Math.pow(val - avg, 2));
+      const avgSquareDiff = squaredDiffs.reduce((acc, val) => acc + val, 0) / scoresThisWeek.length;
+      const stdDev = Math.sqrt(avgSquareDiff);
+
+      stats.push({
+        week: w,
+        name: `Wk ${w}`,
+        avg: parseFloat(avg.toFixed(1)),
+        stdDev: parseFloat(stdDev.toFixed(1)),
+        min: Math.min(...scoresThisWeek),
+        max: Math.max(...scoresThisWeek),
+        rangeBot: parseFloat(Math.max(0, avg - stdDev).toFixed(1)),
+        rangeTop: parseFloat((avg + stdDev).toFixed(1))
+      });
+    }
+    return stats;
+  }, [allUsers, userPeriodScores, currentWeek, weekNumber, userStats]);
 
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#090d16' }}>
         <div style={{ fontSize: '32px', marginBottom: '10px' }}>🪨🏈</div>
         <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 700, letterSpacing: '0.05em' }}>THE ROCK MAN GOT&apos;EM</div>
-        <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>Loading live Week {weekNumber} slate...</div>
+        <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>Loading historical matrix...</div>
       </div>
     );
   }
@@ -306,7 +359,7 @@ export default function MatrixDashboard() {
 
   const exportCSV = () => {
     const exportUsers = [pinnedUser, ...sortedUnpinnedUsers];
-    let csv = 'Matchup,' + exportUsers.map(u => `"${(userNames[u] || u).replace(/"/g, '""')} (${userStats[u]?.totalWithWeek || 0} pts)"`).join(',') + '\n';
+    let csv = `Matchup (Wk ${weekNumber}),` + exportUsers.map(u => `"${(userNames[u] || u).replace(/"/g, '""')} (${userStats[u]?.totalWithWeek || 0} pts)"`).join(',') + '\n';
     activeProps.forEach((prId, gIdx) => {
       const propInfo = propMap[prId] || { title: `Game #${gIdx + 1}` };
       const row = [`"${propInfo.title.replace(/"/g, '""')}"`];
@@ -333,7 +386,7 @@ export default function MatrixDashboard() {
     link.click();
   };
 
-  const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, yearlyTotal: 0 };
+  const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, initialPoints: 0 };
   const pinnedTrend = getRankTrend(initialRanks[pinnedUser], liveRanks[pinnedUser]);
 
   return (
@@ -357,7 +410,6 @@ export default function MatrixDashboard() {
         .frosted-hidden-pill { display: inline-flex; align-items: center; justify-content: center; padding: 3px 6px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgba(255, 255, 255, 0.12); color: #94a3b8; font-size: 9px; font-weight: 700; gap: 3px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); letter-spacing: 0.02em; }
         .badge-pts { padding: 1px 4px; border-radius: 8px; font-size: 10px; font-weight: 800; line-height: 1.1; }
         .team-logo { width: 14px; height: 14px; object-fit: contain; margin-right: 4px; vertical-align: -2px; }
-        
         .recharts-tooltip-cursor { fill: rgba(255, 255, 255, 0.05); }
 
         @media (min-width: 768px) {
@@ -381,7 +433,18 @@ export default function MatrixDashboard() {
               <span style={{ fontSize: '8px', fontFamily: 'monospace', color: '#64748b' }}>#{buildHash}</span>
             </div>
           </div>
-          <span style={{ background: '#1e293b', color: '#f59e0b', border: '1px solid #78350f', borderRadius: '5px', padding: '2px 6px', fontSize: '10px', fontWeight: 800 }}>Wk {weekNumber}</span>
+          
+          {/* THE REFACTOR: Interactive Week Selector */}
+          <select 
+            value={weekNumber} 
+            onChange={(e) => handleWeekChange(e.target.value)} 
+            style={{ background: '#1e293b', color: '#f59e0b', border: '1px solid #78350f', borderRadius: '5px', padding: '2px 6px', fontSize: '11px', fontWeight: 800, cursor: 'pointer' }}
+          >
+            {Array.from({ length: currentWeek }, (_, i) => i + 1).map(w => (
+              <option key={w} value={w}>Wk {w}</option>
+            ))}
+          </select>
+
           <select value={pinnedUser} onChange={(e) => handlePinnedUserChange(e.target.value)} style={{ background: '#0f172a', color: '#f59e0b', border: '1px solid #d97706', borderRadius: '5px', padding: '3px 6px', fontSize: '11px', fontWeight: 700, maxWidth: '120px' }}>
             {allUsers.map(u => <option key={u} value={u}>{userNames[u] || u}</option>)}
           </select>
@@ -389,7 +452,7 @@ export default function MatrixDashboard() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span style={{ fontSize: '9px', color: isOffline ? '#ef4444' : '#64748b', fontWeight: 600, whiteSpace: 'nowrap' }}>{isOffline ? '⚠️ Offline' : timeAgo}</span>
-          <button onClick={() => fetchPicks(false)} title="Refresh" style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
+          <button onClick={() => fetchPicks(false, weekNumber)} title="Refresh" style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
           <button onClick={exportCSV} title="Export CSV" style={{ background: '#334155', border: '1px solid #475569', color: '#fff', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>📥</button>
         </div>
       </div>
@@ -399,7 +462,8 @@ export default function MatrixDashboard() {
         {[
           { id: 'matchups', icon: '🏈', label: 'Matchups' },
           { id: 'leaderboard', icon: '🏆', label: 'Leaderboard' },
-          { id: 'trends', icon: '📈', label: 'Trends' }
+          { id: 'trends', icon: '📈', label: 'Trends' },
+          { id: 'stats', icon: '📊', label: 'Stats' }
         ].map(tab => (
           <button
             key={tab.id}
@@ -412,7 +476,7 @@ export default function MatrixDashboard() {
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderTop: 'none', borderLeft: 'none', borderRight: 'none'
             }}
           >
-            <span style={{ fontSize: '14px' }}>{tab.icon}</span> {tab.label}
+            <span style={{ fontSize: '14px' }}>{tab.icon}</span> <span className="tab-label">{tab.label}</span>
           </button>
         ))}
       </div>
@@ -648,8 +712,6 @@ export default function MatrixDashboard() {
           <div style={{ padding: '24px 16px 48px 16px', maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <span style={{ fontSize: '15px', fontWeight: 900, color: '#f8fafc', letterSpacing: '0.04em' }}>SEASON TRENDS</span>
-              
-              {/* THE REFACTOR: Rank vs Points Toggle */}
               <div style={{ display: 'flex', gap: '4px', background: 'rgba(30,41,59,0.5)', padding: '4px', borderRadius: '8px', border: '1px solid #1f2937' }}>
                 <button 
                   onClick={() => setChartMode('rank')}
@@ -672,8 +734,6 @@ export default function MatrixDashboard() {
                   <LineChart data={chartData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
                     <XAxis dataKey="name" stroke="#64748b" tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} tickLine={false} axisLine={false} dy={10} />
-                    
-                    {/* THE REFACTOR: Dynamic Y-Axis Reversal for Rank Mode */}
                     <YAxis 
                       stroke="#64748b" 
                       tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} 
@@ -685,7 +745,6 @@ export default function MatrixDashboard() {
                       interval="preserveStartEnd"
                       minTickGap={10}
                     />
-                    
                     <Tooltip 
                       contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', boxShadow: '0 8px 16px rgba(0,0,0,0.8)' }}
                       itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
@@ -747,6 +806,76 @@ export default function MatrixDashboard() {
                      </div>
                    );
                 })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: GROUP ANALYTICS (NEW) */}
+        {activeTab === 'stats' && (
+          <div style={{ padding: '24px 16px 48px 16px', maxWidth: '800px', margin: '0 auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <span style={{ fontSize: '15px', fontWeight: 900, color: '#f8fafc', letterSpacing: '0.04em' }}>GROUP ANALYTICS</span>
+              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Averages & Variance</span>
+            </div>
+
+            {/* Stats Table */}
+            <div style={{ background: '#0e1626', border: '1px solid #1f2937', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', marginBottom: '32px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'center' }}>
+                <thead>
+                  <tr style={{ background: '#1a2234', borderBottom: '2px solid #374151' }}>
+                    <th style={{ padding: '10px 8px', color: '#94a3b8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Week</th>
+                    <th style={{ padding: '10px 8px', color: '#38bdf8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Group Avg</th>
+                    <th style={{ padding: '10px 8px', color: '#a78bfa', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Std Dev (±)</th>
+                    <th style={{ padding: '10px 8px', color: '#22c55e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>High Score</th>
+                    <th style={{ padding: '10px 8px', color: '#ef4444', fontWeight: 700 }}>Low Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...groupStatsData].reverse().map((stat, idx) => {
+                    const rowBg = idx % 2 === 0 ? 'rgba(11, 17, 32, 0.7)' : 'rgba(14, 22, 38, 0.7)';
+                    return (
+                      <tr key={stat.week} style={{ background: rowBg, borderBottom: '1px solid #1e293b' }}>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#e2e8f0', fontWeight: 700 }}>{stat.week}</td>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#38bdf8', fontWeight: 800 }}>{stat.avg}</td>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#a78bfa', fontWeight: 600 }}>±{stat.stdDev}</td>
+                        <td style={{ padding: '8px 8px', borderRight: '1px solid #1f2937', color: '#22c55e', fontWeight: 700 }}>{stat.max}</td>
+                        <td style={{ padding: '8px 8px', color: '#ef4444', fontWeight: 700 }}>{stat.min}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Weekly Variance Chart */}
+            <div style={{ background: 'rgba(15, 23, 42, 0.6)', border: '1px solid #1f2937', borderRadius: '12px', padding: '20px 10px 10px 0', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+              <div style={{ width: '100%', height: '300px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={groupStatsData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                    <XAxis dataKey="name" stroke="#64748b" tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} tickLine={false} axisLine={false} dy={10} />
+                    <YAxis stroke="#64748b" tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 600}} tickLine={false} axisLine={false} />
+                    <Tooltip 
+                      contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', boxShadow: '0 8px 16px rgba(0,0,0,0.8)' }}
+                      labelStyle={{ color: '#94a3b8', fontSize: '11px', marginBottom: '4px', fontWeight: 800 }}
+                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                    />
+                    
+                    {/* The Shaded Area represents 1 Standard Deviation around the Average */}
+                    <Area type="monotone" dataKey="rangeTop" stroke="none" fill="#a78bfa" fillOpacity={0.15} name="Upper Variance" />
+                    <Area type="monotone" dataKey="rangeBot" stroke="none" fill="#0f172a" fillOpacity={1} name="Lower Variance (Hidden)" style={{ display: 'none' }} />
+                    
+                    {/* The solid line represents the true group average */}
+                    <Line type="monotone" dataKey="avg" stroke="#38bdf8" strokeWidth={3} dot={{ r: 4, fill: '#38bdf8', strokeWidth: 0 }} name="Group Average" />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>
+                <span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#38bdf8', borderRadius: '50%', marginRight: '6px', verticalAlign: '-1px' }}></span>
+                Group Average
+                <span style={{ display: 'inline-block', width: '10px', height: '10px', background: 'rgba(167, 139, 250, 0.3)', borderRadius: '2px', marginLeft: '16px', marginRight: '6px', verticalAlign: '-1px' }}></span>
+                ±1 Standard Deviation
               </div>
             </div>
           </div>
