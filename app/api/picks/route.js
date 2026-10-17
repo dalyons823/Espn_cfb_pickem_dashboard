@@ -3,21 +3,41 @@ import { NextResponse } from 'next/server';
 const CHALLENGE_SLUG = "college-football-pickem-2026";
 const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
-export async function GET() {
+export async function GET(request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const requestedWeek = searchParams.get('week');
+    
     let activeWeek = 6;
+    let currentWeek = 6;
     let activeProps = [];
 
-    // 1. Fetch challenge definitions using the make_picks view
-    const chalRes = await fetch(
+    // 1. Fetch current challenge definitions to find the true current week
+    const chalResCurrent = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
       { cache: 'no-store' }
     );
 
-    if (chalRes.ok) {
-      const chalData = await chalRes.json();
-      activeWeek = chalData.currentScoringPeriod?.id || 6;
-      const allProps = chalData.propositions || [];
+    if (chalResCurrent.ok) {
+      const chalDataCurrent = await chalResCurrent.json();
+      currentWeek = chalDataCurrent.currentScoringPeriod?.id || 6;
+      activeWeek = requestedWeek ? Number(requestedWeek) : currentWeek;
+      
+      let allProps = [];
+
+      // THE FIX: If looking at a past week, fetch that specific week's propositions
+      if (activeWeek === currentWeek) {
+        allProps = chalDataCurrent.propositions || [];
+      } else {
+        const chalResPast = await fetch(
+          `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&scoringPeriodId=${activeWeek}&_=${Date.now()}`,
+          { cache: 'no-store' }
+        );
+        if (chalResPast.ok) {
+          const pastData = await chalResPast.json();
+          allProps = pastData.propositions || [];
+        }
+      }
       
       activeProps = allProps.filter(p => {
         const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
@@ -29,7 +49,7 @@ export async function GET() {
       });
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300)
+    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) for the target week
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
@@ -225,15 +245,15 @@ export async function GET() {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group entries and history
-    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&_=${Date.now()}`;
+    // 4. THE FIX: Fetch group entries appending scoringPeriodId to force historical picks
+    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
     const groupRes = await fetch(groupUrl, { cache: 'no-store' });
     const gData = groupRes.ok ? await groupRes.json() : {};
     const entries = gData.entries || [];
     const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
 
-    const users = []; // Will now store entryIds instead of names
-    const userNames = {}; // NEW: Mapping entryId -> Display Name
+    const users = []; 
+    const userNames = {}; 
     let myUser = null;
     const otherUsers = [];
     const pickMap = {};
@@ -261,7 +281,8 @@ export async function GET() {
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
-      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&_=${Date.now()}`;
+      // THE FIX: Appended scoringPeriodId to the individual entry fetch
+      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
       const eRes = await fetch(entryUrl, { cache: 'no-store' });
       if (!eRes.ok) return { entryId, userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
@@ -307,11 +328,10 @@ export async function GET() {
     const settled = await Promise.all(entryPromises);
 
     settled.forEach(({ entryId, userName, picks, scoreVal, periodScores }) => {
-      userNames[entryId] = userName; // Save the mapping
+      userNames[entryId] = userName; 
       userYearlyScores[entryId] = scoreVal;
       userPeriodScores[entryId] = periodScores || {};
 
-      // Match PosaParty, but save their ID instead of their string name
       if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
         myUser = entryId;
       } else {
@@ -354,18 +374,18 @@ export async function GET() {
       });
     });
 
-    // Fallback if PosaParty wasn't explicitly found
     if (!myUser && otherUsers.length > 0) {
       myUser = otherUsers[0];
     }
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'id-index-fix').slice(0, 7);
+    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v10-time-travel').slice(0, 7);
 
     return NextResponse.json({
       myUser,
       otherUsers,
-      userNames, // Export the display names map
+      userNames, 
       weekNumber: activeWeek,
+      currentWeek: currentWeek, 
       activeProps: contestPropIds,
       propMap,
       pickMap,
