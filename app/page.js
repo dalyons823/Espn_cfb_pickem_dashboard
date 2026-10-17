@@ -247,7 +247,6 @@ export default function MatrixDashboard() {
     return history;
   }, [allUsers, userPeriodScores, weekNumber, currentWeek, userStats, chartMode]);
 
-  // REFACTORED GROUP STATS: Includes dynamically extracted Pinned User score
   const groupStatsData = useMemo(() => {
     if (!allUsers.length) return [];
     const stats = [];
@@ -259,7 +258,6 @@ export default function MatrixDashboard() {
         return userPeriodScores[u]?.[w] || 0;
       });
 
-      // Extract specific pinned user score
       let pinnedScore = 0;
       if (pinnedUser) {
         if (w === currentWeek && weekNumber === currentWeek) {
@@ -269,7 +267,6 @@ export default function MatrixDashboard() {
         }
       }
 
-      // Filter out zeroes
       scoresThisWeek = scoresThisWeek.filter(score => score > 0);
 
       if (scoresThisWeek.length === 0) {
@@ -294,7 +291,7 @@ export default function MatrixDashboard() {
         mean: parseFloat(mean.toFixed(1)),
         median: parseFloat(median.toFixed(1)),
         min: parseFloat(min.toFixed(1)),
-        pinnedScore: parseFloat(pinnedScore.toFixed(1)) // Included for line chart
+        pinnedScore: parseFloat(pinnedScore.toFixed(1))
       });
     }
     return stats;
@@ -402,7 +399,9 @@ export default function MatrixDashboard() {
 
   const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, initialPoints: 0 };
   const pinnedTrend = getRankTrend(initialRanks[pinnedUser], liveRanks[pinnedUser]);
-  const pinnedColor = getColorForUser(pinnedUser);
+  
+  // THE REFACTOR: Set a static yellow highlight color exclusively for the pinned user on the Stats Tab
+  const pinnedColor = '#facc15';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#080c14', position: 'relative' }}>
@@ -837,7 +836,7 @@ export default function MatrixDashboard() {
                 <thead>
                   <tr style={{ background: '#1a2234', borderBottom: '2px solid #374151' }}>
                     <th style={{ padding: '10px 8px', color: '#94a3b8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Week</th>
-                    <th style={{ padding: '10px 8px', color: '#ede20e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>{userNames[pinnedUser] || 'Selected'}</th>
+                    <th style={{ padding: '10px 8px', color: pinnedColor, fontWeight: 700, borderRight: '1px solid #1f2937' }}>{userNames[pinnedUser] || 'Selected'}</th>
                     <th style={{ padding: '10px 8px', color: '#22c55e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Max</th>
                     <th style={{ padding: '10px 8px', color: '#38bdf8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Mean</th>
                     <th style={{ padding: '10px 8px', color: '#a78bfa', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Median</th>
