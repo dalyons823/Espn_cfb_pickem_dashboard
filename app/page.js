@@ -837,7 +837,7 @@ export default function MatrixDashboard() {
                 <thead>
                   <tr style={{ background: '#1a2234', borderBottom: '2px solid #374151' }}>
                     <th style={{ padding: '10px 8px', color: '#94a3b8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Week</th>
-                    <th style={{ padding: '10px 8px', color: pinnedColor, fontWeight: 700, borderRight: '1px solid #1f2937' }}>{userNames[pinnedUser] || 'Selected'}</th>
+                    <th style={{ padding: '10px 8px', color: '#ede20e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>{userNames[pinnedUser] || 'Selected'}</th>
                     <th style={{ padding: '10px 8px', color: '#22c55e', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Max</th>
                     <th style={{ padding: '10px 8px', color: '#38bdf8', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Mean</th>
                     <th style={{ padding: '10px 8px', color: '#a78bfa', fontWeight: 700, borderRight: '1px solid #1f2937' }}>Median</th>
