@@ -51,6 +51,31 @@ function getColorForUser(entryId) {
   return `hsl(${hue}, 85%, 65%)`;
 }
 
+// Sparkline SVG Generator for Win Probability behind the Matchup Cell
+function WinProbSparkline({ history }) {
+  if (!history || history.length < 2) return null;
+  const width = 210;
+  const height = 75;
+  const len = history.length;
+
+  const points = history.map((val, idx) => {
+    const x = (idx / (len - 1)) * width;
+    const y = height - (val / 100) * height;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const polyPoints = `${points[0].split(',')[0]},${height} ` + points.join(' ') + ` ${points[points.length - 1].split(',')[0]},${height}`;
+
+  return (
+    <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, opacity: 0.22 }}>
+      <polygon points={polyPoints} fill="#38bdf8" />
+      <polyline fill="none" stroke="#38bdf8" strokeWidth="2" points={points.join(' ')} />
+      {/* 50% neutral line */}
+      <line x1="0" y1={height / 2} x2={width} y2={height / 2} stroke="#64748b" strokeWidth="1" strokeDasharray="3 3" opacity="0.4" />
+    </svg>
+  );
+}
+
 export default function MatrixDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -414,7 +439,7 @@ export default function MatrixDashboard() {
         .col-match { position: sticky; left: 0; z-index: 20; width: 155px; min-width: 155px; max-width: 155px; box-sizing: border-box; box-shadow: 2px 0 6px rgba(0,0,0,0.5); }
         .col-pinned { position: sticky; left: 155px; z-index: 20; width: 88px; min-width: 88px; max-width: 88px; box-sizing: border-box; box-shadow: 2px 0 6px rgba(0,0,0,0.5); }
         .col-other { width: 84px; min-width: 84px; max-width: 84px; box-sizing: border-box; }
-        .matchup-link { text-decoration: none; color: inherit; display: block; cursor: pointer; border-radius: 4px; transition: opacity 0.15s ease, filter 0.15s ease; }
+        .matchup-link { text-decoration: none; color: inherit; display: block; cursor: pointer; border-radius: 4px; transition: opacity 0.15s ease, filter 0.15s ease; position: relative; overflow: hidden; }
         .matchup-link:hover { filter: brightness(1.15); }
         .pill-box { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 2px 6px; min-height: 28px; border-radius: 14px; font-size: 11px; font-weight: 700; max-width: 80px; white-space: nowrap; box-sizing: border-box; transition: transform 0.15s ease; }
         .pick-logo-img { width: 21px; height: 21px; object-fit: contain; flex-shrink: 0; }
@@ -530,8 +555,11 @@ export default function MatrixDashboard() {
                     <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: gIdx % 2 === 0 ? '#0b1120' : '#0e1626' }}>
                       <a href={propInfo.espnUrl || 'https://www.espn.com/college-football/scoreboard'} target="_blank" rel="noopener noreferrer" className="matchup-link" title={`Open ${propInfo.title} on ESPN`}>
                         
+                        {/* EMBEDDED WIN PROBABILITY SPARKLINE GRAPH BEHIND THE TEXT */}
+                        <WinProbSparkline history={sc?.winProbHistory} />
+
                         {/* Away Row */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0', position: 'relative', zIndex: 1 }}>
                           <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
                             {propInfo.awayLogo && <img src={propInfo.awayLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>{awayLabel}</span>
@@ -542,7 +570,7 @@ export default function MatrixDashboard() {
                         </div>
                         
                         {/* Home Row */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0', marginTop: '1px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0', marginTop: '1px', position: 'relative', zIndex: 1 }}>
                           <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
                             {propInfo.homeLogo && <img src={propInfo.homeLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>@{homeLabel}</span>
@@ -553,7 +581,7 @@ export default function MatrixDashboard() {
                         </div>
                         
                         {/* Status Row (Clock, TV, Clean Down & Distance) */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', marginTop: '3px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', marginTop: '3px', position: 'relative', zIndex: 1 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px', fontWeight: 600 }}>
                             <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8'), display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                               <span>{isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}</span>

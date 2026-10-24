@@ -14,7 +14,6 @@ export async function GET(request) {
     let currentWeek = 6;
     let activeProps = [];
 
-    // 1. Fetch current challenge definitions to find the true current week
     const chalResCurrent = await fetch(
       `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
       { cache: 'no-store' }
@@ -50,7 +49,6 @@ export async function GET(request) {
       });
     }
 
-    // 2. Fetch live scoreboard across all FBS games (groups=80, limit=300) for the target week
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
@@ -59,7 +57,9 @@ export async function GET(request) {
       );
       if (sbRes.ok) {
         const sbData = await sbRes.json();
-        scoreboardEvents = (sbData.events || []).map(ev => {
+        
+        // Fetch win probabilities concurrently for live/completed games
+        scoreboardEvents = await Promise.all((sbData.events || []).map(async (ev) => {
           const comp = ev.competitions?.[0];
           if (!comp) return null;
           const away = comp.competitors?.find(c => c.homeAway === 'away');
@@ -82,7 +82,6 @@ export async function GET(request) {
           const awayTeamId = String(away?.team?.id || away?.id || '');
           const homeTeamId = String(home?.team?.id || home?.id || '');
 
-          // Extract possession, down/distance, and yard line with deep fallbacks
           let possession = null;
           let situationSummary = '';
 
@@ -99,7 +98,6 @@ export async function GET(request) {
             if (possId && awayTeamId && possId === awayTeamId) possession = 'away';
             else if (possId && homeTeamId && possId === homeTeamId) possession = 'home';
 
-            // 1. Resolve Down & Distance (top-level -> lastPlay.end -> numeric down/distance)
             let shortDown = situation.shortDownDistanceText || endState.shortDownDistanceText || '';
             if (!shortDown) {
               const rawDown = situation.down ?? endState.down;
@@ -110,7 +108,6 @@ export async function GET(request) {
               }
             }
 
-            // 2. Resolve Field Position / Yard Line
             let yardLine = situation.possessionText || endState.possessionText || startState.possessionText || '';
             const fullDown = situation.downDistanceText || endState.downDistanceText || '';
             if (!yardLine && fullDown.includes(' at ')) {
@@ -123,7 +120,6 @@ export async function GET(request) {
               }
             }
 
-            // 3. Assemble clean display string
             if (shortDown && yardLine) {
               situationSummary = `${shortDown} • ${yardLine}`;
             } else if (fullDown) {
@@ -133,7 +129,6 @@ export async function GET(request) {
             } else if (yardLine) {
               situationSummary = `Ball on ${yardLine}`;
             } else if (state === 'in') {
-              // Fallback when between drives (after a score/PAT/Kickoff)
               const playType = (situation.lastPlay?.type?.text || '').toLowerCase();
               if (playType.includes('touchdown') || playType.includes('field goal') || playType.includes('pat') || playType.includes('extra point')) {
                 situationSummary = 'Kickoff Pending';
@@ -145,6 +140,20 @@ export async function GET(request) {
             }
           }
 
+          // Fetch win probability time series if game is live or finished
+          let winProbHistory = [];
+          if (!isPre) {
+            try {
+              const sumRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=${ev.id}`, { cache: 'no-store' });
+              if (sumRes.ok) {
+                const sumData = await sumRes.json();
+                const wpArray = sumData.winprobability || [];
+                // Map home win percentage (0 to 1 -> 0 to 100)
+                winProbHistory = wpArray.map(wp => typeof wp.homeWinPercentage === 'number' ? Math.round(wp.homeWinPercentage * 100) : 50);
+              }
+            } catch (e) {}
+          }
+
           const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
           const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
           const awayLogo = away?.team?.logo || away?.team?.logos?.[0]?.href || '';
@@ -154,7 +163,6 @@ export async function GET(request) {
           const lineDetails = oddsObj?.details || '';
           const overUnder = oddsObj?.overUnder ? `O/U ${oddsObj.overUnder}` : '';
 
-          // Check all 3 ESPN broadcast paths
           let tvNetwork = '';
           if (typeof comp.broadcast === 'string' && comp.broadcast.trim()) {
             tvNetwork = comp.broadcast.trim();
@@ -200,10 +208,12 @@ export async function GET(request) {
               awayAbbr,
               homeAbbr,
               possession,
-              situationSummary
+              situationSummary,
+              winProbHistory
             }
           };
-        }).filter(Boolean);
+        }));
+        scoreboardEvents = scoreboardEvents.filter(Boolean);
       }
     } catch (e) {
       console.error("Scoreboard fetch error:", e);
@@ -220,7 +230,6 @@ export async function GET(request) {
       return false;
     }
 
-    // 3. Register propositions, logos, links, and Vegas lines
     const propMap = {};
     const contestPropIds = [];
 
@@ -261,7 +270,8 @@ export async function GET(request) {
           state: 'post',
           leader: winner,
           awayAbbr: rawAway,
-          homeAbbr: rawHome
+          homeAbbr: rawHome,
+          winProbHistory: [100]
         };
       }
 
@@ -330,7 +340,6 @@ export async function GET(request) {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. Fetch group entries
     const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
     const groupRes = await fetch(groupUrl, { cache: 'no-store' });
     const gData = groupRes.ok ? await groupRes.json() : {};
@@ -463,7 +472,7 @@ export async function GET(request) {
     }
 
     const rawSha = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'live').slice(0, 7);
-    const buildHash = `${rawSha}-v15`;
+    const buildHash = `${rawSha}-v16`;
 
     return NextResponse.json({
       myUser,
