@@ -399,8 +399,6 @@ export default function MatrixDashboard() {
 
   const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, initialPoints: 0 };
   const pinnedTrend = getRankTrend(initialRanks[pinnedUser], liveRanks[pinnedUser]);
-  
-  // THE REFACTOR: Set a static yellow highlight color exclusively for the pinned user on the Stats Tab
   const pinnedColor = '#facc15';
 
   return (
@@ -413,8 +411,8 @@ export default function MatrixDashboard() {
 
       <style dangerouslySetInnerHTML={{ __html: `
         .matrix-table { width: max-content; table-layout: fixed; border-collapse: separate; border-spacing: 0; position: relative; z-index: 1; }
-        .col-match { position: sticky; left: 0; z-index: 20; width: 145px; min-width: 145px; max-width: 145px; box-sizing: border-box; box-shadow: 2px 0 6px rgba(0,0,0,0.5); }
-        .col-pinned { position: sticky; left: 145px; z-index: 20; width: 88px; min-width: 88px; max-width: 88px; box-sizing: border-box; box-shadow: 2px 0 6px rgba(0,0,0,0.5); }
+        .col-match { position: sticky; left: 0; z-index: 20; width: 155px; min-width: 155px; max-width: 155px; box-sizing: border-box; box-shadow: 2px 0 6px rgba(0,0,0,0.5); }
+        .col-pinned { position: sticky; left: 155px; z-index: 20; width: 88px; min-width: 88px; max-width: 88px; box-sizing: border-box; box-shadow: 2px 0 6px rgba(0,0,0,0.5); }
         .col-other { width: 84px; min-width: 84px; max-width: 84px; box-sizing: border-box; }
         .matchup-link { text-decoration: none; color: inherit; display: block; cursor: pointer; border-radius: 4px; transition: opacity 0.15s ease, filter 0.15s ease; }
         .matchup-link:hover { filter: brightness(1.15); }
@@ -427,8 +425,8 @@ export default function MatrixDashboard() {
         .recharts-tooltip-cursor { fill: rgba(255, 255, 255, 0.05); }
 
         @media (min-width: 768px) {
-          .col-match { width: 200px; min-width: 200px; max-width: 200px; }
-          .col-pinned { left: 200px; width: 120px; min-width: 120px; max-width: 120px; }
+          .col-match { width: 210px; min-width: 210px; max-width: 210px; }
+          .col-pinned { left: 210px; width: 120px; min-width: 120px; max-width: 120px; }
           .col-other { min-width: 115px; width: 115px; max-width: 115px; }
           .pill-box { padding: 3px 8px; min-height: 32px; border-radius: 16px; font-size: 12px; max-width: 105px; gap: 6px; }
           .pick-logo-img { width: 24px; height: 24px; }
@@ -531,28 +529,53 @@ export default function MatrixDashboard() {
                   <tr key={prId} style={{ background: rowBg }}>
                     <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: gIdx % 2 === 0 ? '#0b1120' : '#0e1626' }}>
                       <a href={propInfo.espnUrl || 'https://www.espn.com/college-football/scoreboard'} target="_blank" rel="noopener noreferrer" className="matchup-link" title={`Open ${propInfo.title} on ESPN`}>
+                        
+                        {/* Away Row */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '105px' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
                             {propInfo.awayLogo && <img src={propInfo.awayLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>{awayLabel}</span>
+                            {isLive && sc?.possession === 'away' && <span style={{ fontSize: '10px', marginLeft: '4px' }} title="Has Possession">🏈</span>}
                             {isAwayFav && <span style={{ color: '#fef08a', fontSize: '9px', fontWeight: 800, marginLeft: '4px' }}>{lineSpread}</span>}
                           </span>
                           <span style={{ minWidth: '18px', textAlign: 'right' }}>{isPreGame ? '' : (sc?.awayScore ?? '')}</span>
                         </div>
+                        
+                        {/* Home Row */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0', marginTop: '1px' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '105px' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
                             {propInfo.homeLogo && <img src={propInfo.homeLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>@{homeLabel}</span>
+                            {isLive && sc?.possession === 'home' && <span style={{ fontSize: '10px', marginLeft: '4px' }} title="Has Possession">🏈</span>}
                             {isHomeFav && <span style={{ color: '#fef08a', fontSize: '9px', fontWeight: 800, marginLeft: '4px' }}>{lineSpread}</span>}
                           </span>
                           <span style={{ minWidth: '18px', textAlign: 'right' }}>{isPreGame ? '' : (sc?.homeScore ?? '')}</span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
-                          <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
-                            {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}
-                          </span>
-                          {(counts.away > 0 || counts.home > 0) ? <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span> : <span style={{ color: '#64748b', fontSize: '8px' }}>🔒 At kick</span>}
+                        
+                        {/* Status Row (Clock, TV, Field Position) */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '3px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px', fontWeight: 600 }}>
+                            <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8'), display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                              <span>{isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}</span>
+                              {propInfo.tv && <span style={{ color: '#cbd5e1', fontSize: '8px', background: 'rgba(255,255,255,0.12)', padding: '1px 4px', borderRadius: '3px', fontWeight: 700 }}>📺 {propInfo.tv}</span>}
+                            </span>
+                            {(counts.away > 0 || counts.home > 0) ? <span style={{ color: '#94a3b8', flexShrink: 0 }}>📊 {counts.away}-{counts.home}</span> : <span style={{ color: '#64748b', fontSize: '8px' }}>🔒 At kick</span>}
+                          </div>
+                          
+                          {/* Live Field Position / Last Play Summary */}
+                          {isLive && sc?.situationSummary && (
+                            <div style={{ 
+                              display: 'flex', alignItems: 'center', gap: '3px', fontSize: '8.5px', fontWeight: 700, 
+                              color: sc.isRedZone ? '#fca5a5' : '#fcd34d',
+                              background: sc.isRedZone ? 'rgba(239, 68, 68, 0.18)' : 'rgba(250, 204, 21, 0.1)',
+                              padding: '1px 4px', borderRadius: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                            }}>
+                              <span>{sc.isRedZone ? '🚨' : '📍'}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sc.situationSummary}</span>
+                            </div>
+                          )}
                         </div>
+
                       </a>
                     </td>
                     <td className="col-pinned" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: gIdx % 2 === 0 ? '#111927' : '#141d2e', textAlign: 'center' }}>
