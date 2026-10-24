@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 
-const CHALLENGE_SLUG = "college-football-pickem-2026";
-const GROUP_ID = "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
+export const dynamic = 'force-dynamic';
+
+const CHALLENGE_SLUG = process.env.NEXT_PUBLIC_ESPN_CHALLENGE_SLUG || "college-football-pickem-2026";
+const GROUP_ID = process.env.NEXT_PUBLIC_ESPN_GROUP_ID || "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
 export async function GET(request) {
   try {
@@ -25,7 +27,6 @@ export async function GET(request) {
       
       let allProps = [];
 
-      // THE FIX: If looking at a past week, fetch that specific week's propositions
       if (activeWeek === currentWeek) {
         allProps = chalDataCurrent.propositions || [];
       } else {
@@ -63,6 +64,7 @@ export async function GET(request) {
           if (!comp) return null;
           const away = comp.competitors?.find(c => c.homeAway === 'away');
           const home = comp.competitors?.find(c => c.homeAway === 'home');
+          const situation = comp.situation || null;
 
           const state = ev.status?.type?.state || 'pre';
           const isPre = state === 'pre';
@@ -77,6 +79,37 @@ export async function GET(request) {
             else leader = 'tie';
           }
 
+          const awayTeamId = String(away?.team?.id || away?.id || '');
+          const homeTeamId = String(home?.team?.id || home?.id || '');
+
+          // Extract possession, down/distance, yard line, and last play fallback
+          let possession = null;
+          let situationSummary = '';
+          let isRedZone = false;
+
+          if (situation) {
+            const possId = String(situation.possession || situation.lastPlay?.team?.id || '');
+            if (possId && awayTeamId && possId === awayTeamId) possession = 'away';
+            else if (possId && homeTeamId && possId === homeTeamId) possession = 'home';
+
+            const shortDown = situation.shortDownDistanceText || '';
+            const fullDown = situation.downDistanceText || '';
+            const yardLine = situation.possessionText || '';
+            const lastPlayText = situation.lastPlay?.text || '';
+
+            if (shortDown && yardLine) {
+              situationSummary = `${shortDown} at ${yardLine}`;
+            } else if (fullDown) {
+              situationSummary = fullDown;
+            } else if (yardLine) {
+              situationSummary = `Ball on ${yardLine}`;
+            } else if (lastPlayText) {
+              situationSummary = lastPlayText.length > 42 ? `${lastPlayText.slice(0, 42)}...` : lastPlayText;
+            }
+
+            isRedZone = Boolean(situation.isRedZone);
+          }
+
           const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
           const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
           const awayLogo = away?.team?.logo || away?.team?.logos?.[0]?.href || '';
@@ -85,6 +118,18 @@ export async function GET(request) {
           const oddsObj = comp.odds?.[0] || null;
           const lineDetails = oddsObj?.details || '';
           const overUnder = oddsObj?.overUnder ? `O/U ${oddsObj.overUnder}` : '';
+
+          // Check all 3 ESPN broadcast paths
+          let tvNetwork = '';
+          if (typeof comp.broadcast === 'string' && comp.broadcast.trim()) {
+            tvNetwork = comp.broadcast.trim();
+          } else if (Array.isArray(comp.broadcasts) && comp.broadcasts.length > 0) {
+            const names = comp.broadcasts.flatMap(b => b.names || []).filter(Boolean);
+            if (names.length > 0) tvNetwork = names[0];
+          } else if (Array.isArray(comp.geoBroadcasts) && comp.geoBroadcasts.length > 0) {
+            const mediaName = comp.geoBroadcasts.map(g => g.media?.shortName).filter(Boolean);
+            if (mediaName.length > 0) tvNetwork = mediaName[0];
+          }
 
           const collectNames = (teamObj) => {
             if (!teamObj) return [];
@@ -107,6 +152,7 @@ export async function GET(request) {
             homeLogo,
             lineDetails,
             overUnder,
+            tv: tvNetwork,
             awayNames: collectNames(away?.team),
             homeNames: collectNames(home?.team),
             espnUrl: `https://www.espn.com/college-football/game/_/gameId/${ev.id}`,
@@ -117,7 +163,10 @@ export async function GET(request) {
               state,
               leader,
               awayAbbr,
-              homeAbbr
+              homeAbbr,
+              possession,
+              situationSummary,
+              isRedZone
             }
           };
         }).filter(Boolean);
@@ -189,6 +238,7 @@ export async function GET(request) {
       const eventDate = matchedEvent?.date || rawProp.date || rawProp.startTime || rawProp.lockDate;
       const eventId = matchedEvent?.id || rawProp.eventId || outcomes[0]?.eventId || outcomes[1]?.eventId || '';
       const espnUrl = matchedEvent?.espnUrl || (eventId ? `https://www.espn.com/college-football/game/_/gameId/${eventId}` : 'https://www.espn.com/college-football/scoreboard');
+      const tv = matchedEvent?.tv || '';
 
       let odds = null;
       if (matchedEvent?.lineDetails) {
@@ -229,6 +279,7 @@ export async function GET(request) {
         title: `${away} @ ${home}`,
         score,
         odds,
+        tv,
         outcomeAwayId,
         outcomeHomeId,
         kickoffDate: eventDate || null,
@@ -245,7 +296,7 @@ export async function GET(request) {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    // 4. THE FIX: Fetch group entries appending scoringPeriodId to force historical picks
+    // 4. Fetch group entries
     const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
     const groupRes = await fetch(groupUrl, { cache: 'no-store' });
     const gData = groupRes.ok ? await groupRes.json() : {};
@@ -281,7 +332,6 @@ export async function GET(request) {
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
-      // THE FIX: Appended scoringPeriodId to the individual entry fetch
       const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
       const eRes = await fetch(entryUrl, { cache: 'no-store' });
       if (!eRes.ok) return { entryId, userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
@@ -378,7 +428,8 @@ export async function GET(request) {
       myUser = otherUsers[0];
     }
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v10-time-travel').slice(0, 7);
+    const rawSha = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'live').slice(0, 7);
+    const buildHash = `${rawSha}-v13`;
 
     return NextResponse.json({
       myUser,
