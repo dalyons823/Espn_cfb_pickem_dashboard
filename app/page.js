@@ -399,8 +399,6 @@ export default function MatrixDashboard() {
 
   const pinnedStats = userStats[pinnedUser] || { earnedPts: 0, asItStands: 0, maxPossible: 55, totalWithWeek: 0, initialPoints: 0 };
   const pinnedTrend = getRankTrend(initialRanks[pinnedUser], liveRanks[pinnedUser]);
-  
-  // THE REFACTOR: Set a static yellow highlight color exclusively for the pinned user on the Stats Tab
   const pinnedColor = '#facc15';
 
   return (
@@ -531,28 +529,48 @@ export default function MatrixDashboard() {
                   <tr key={prId} style={{ background: rowBg }}>
                     <td className="col-match" style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', borderRight: '1px solid #1f2937', background: gIdx % 2 === 0 ? '#0b1120' : '#0e1626' }}>
                       <a href={propInfo.espnUrl || 'https://www.espn.com/college-football/scoreboard'} target="_blank" rel="noopener noreferrer" className="matchup-link" title={`Open ${propInfo.title} on ESPN`}>
+                        
+                        {/* Away Row */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'away' ? '#38bdf8' : '#e2e8f0' }}>
                           <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '105px' }}>
                             {propInfo.awayLogo && <img src={propInfo.awayLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>{awayLabel}</span>
+                            {sc?.possession === 'away' && <span style={{ fontSize: '9px', marginLeft: '4px' }} title="Possession">🏈</span>}
                             {isAwayFav && <span style={{ color: '#fef08a', fontSize: '9px', fontWeight: 800, marginLeft: '4px' }}>{lineSpread}</span>}
                           </span>
                           <span style={{ minWidth: '18px', textAlign: 'right' }}>{isPreGame ? '' : (sc?.awayScore ?? '')}</span>
                         </div>
+                        
+                        {/* Home Row */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: 700, color: sc?.leader === 'home' ? '#38bdf8' : '#e2e8f0', marginTop: '1px' }}>
                           <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '105px' }}>
                             {propInfo.homeLogo && <img src={propInfo.homeLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>@{homeLabel}</span>
+                            {sc?.possession === 'home' && <span style={{ fontSize: '9px', marginLeft: '4px' }} title="Possession">🏈</span>}
                             {isHomeFav && <span style={{ color: '#fef08a', fontSize: '9px', fontWeight: 800, marginLeft: '4px' }}>{lineSpread}</span>}
                           </span>
                           <span style={{ minWidth: '18px', textAlign: 'right' }}>{isPreGame ? '' : (sc?.homeScore ?? '')}</span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3px', fontSize: '9px', fontWeight: 600 }}>
-                          <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8') }}>
-                            {isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}
-                          </span>
-                          {(counts.away > 0 || counts.home > 0) ? <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span> : <span style={{ color: '#64748b', fontSize: '8px' }}>🔒 At kick</span>}
+                        
+                        {/* Status Row (Clock, TV, Field Position) */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '3px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px', fontWeight: 600 }}>
+                            <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8'), display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span>{isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}</span>
+                              {propInfo.tv && !isFinal && <span style={{ color: '#94a3b8', fontSize: '8px', background: 'rgba(255,255,255,0.1)', padding: '1px 4px', borderRadius: '4px' }}>📺 {propInfo.tv}</span>}
+                            </span>
+                            {(counts.away > 0 || counts.home > 0) ? <span style={{ color: '#94a3b8' }}>📊 {counts.away}-{counts.home}</span> : <span style={{ color: '#64748b', fontSize: '8px' }}>🔒 At kick</span>}
+                          </div>
+                          
+                          {/* NEW: Live Field Position */}
+                          {isLive && (sc?.downDistanceText || sc?.possessionText) && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '8px', fontWeight: 700, color: sc.isRedZone ? '#ef4444' : '#a78bfa' }}>
+                              {sc.isRedZone && <span style={{ fontSize: '9px' }}>🚨</span>}
+                              <span>{sc.downDistanceText} {sc.possessionText ? `(${sc.possessionText})` : ''}</span>
+                            </div>
+                          )}
                         </div>
+
                       </a>
                     </td>
                     <td className="col-pinned" style={{ padding: '4px 2px', borderBottom: '1px solid #1e293b', borderRight: '2px solid #f59e0b', background: gIdx % 2 === 0 ? '#111927' : '#141d2e', textAlign: 'center' }}>
@@ -643,7 +661,7 @@ export default function MatrixDashboard() {
                 {sortedUnpinnedUsers.map(u => {
                   const tr = getRankTrend(initialRanks[u], liveRanks[u]);
                   return (
-                    <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1e2937', textAlign: 'center' }}>
+                    <td key={u} className="col-other" style={{ padding: '6px 4px', background: '#0b1120', borderBottom: '1px solid #1f2937', borderRight: '1px solid #1f2937', textAlign: 'center' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                         <span style={{ fontWeight: 700, fontSize: '11px', color: '#38bdf8' }}>{liveRanks[u] ? `#${liveRanks[u]}` : '—'}</span>
                         {tr && <span style={{ fontSize: '8px', fontWeight: 800, color: tr.color }}>{tr.symbol}</span>}
