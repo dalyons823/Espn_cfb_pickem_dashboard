@@ -212,3 +212,234 @@ export async function GET(request) {
       } else if (outcomes[1]?.winner || (rawProp.correctOutcomeId && String(rawProp.correctOutcomeId) === outcomeHomeId)) {
         winner = 'home';
       }
+
+      let score = matchedEvent?.scoreInfo || null;
+      if (!score && winner) {
+        score = {
+          awayScore: '',
+          homeScore: '',
+          statusDetail: 'Final',
+          state: 'post',
+          leader: winner,
+          awayAbbr: rawAway,
+          homeAbbr: rawHome
+        };
+      }
+
+      const away = matchedEvent?.awayAbbr || rawAway;
+      const home = matchedEvent?.homeAbbr || rawHome;
+      const awayLogo = matchedEvent?.awayLogo || '';
+      const homeLogo = matchedEvent?.homeLogo || '';
+      const eventDate = matchedEvent?.date || rawProp.date || rawProp.startTime || rawProp.lockDate;
+      const eventId = matchedEvent?.id || rawProp.eventId || outcomes[0]?.eventId || outcomes[1]?.eventId || '';
+      const espnUrl = matchedEvent?.espnUrl || (eventId ? `https://www.espn.com/college-football/game/_/gameId/${eventId}` : 'https://www.espn.com/college-football/scoreboard');
+      const tv = matchedEvent?.tv || '';
+
+      let odds = null;
+      if (matchedEvent?.lineDetails) {
+        const line = matchedEvent.lineDetails.trim();
+        let favoriteSide = null;
+        let lineSpread = '';
+
+        const parts = line.split(/\s+/);
+        if (parts.length >= 2) {
+          const favText = parts[0].toLowerCase();
+          lineSpread = parts.slice(1).join(' ');
+
+          if (matchedEvent.awayNames.some(n => n.includes(favText) || favText.includes(n)) || away.toLowerCase().includes(favText)) {
+            favoriteSide = 'away';
+          } else if (matchedEvent.homeNames.some(n => n.includes(favText) || favText.includes(n)) || home.toLowerCase().includes(favText)) {
+            favoriteSide = 'home';
+          }
+        }
+
+        odds = { rawLine: line, favoriteSide, lineSpread };
+      }
+
+      let kickoffTime = 0;
+      if (eventDate) {
+        try {
+          kickoffTime = new Date(eventDate).getTime();
+        } catch (e) {}
+      }
+
+      propMap[idStr] = {
+        id: idStr,
+        eventId,
+        espnUrl,
+        away,
+        home,
+        awayLogo,
+        homeLogo,
+        title: `${away} @ ${home}`,
+        score,
+        odds,
+        tv,
+        outcomeAwayId,
+        outcomeHomeId,
+        kickoffDate: eventDate || null,
+        kickoffTime
+      };
+    });
+
+    contestPropIds.sort((a, b) => {
+      const tA = propMap[a]?.kickoffTime || 0;
+      const tB = propMap[b]?.kickoffTime || 0;
+      if (tA && tB && tA !== tB) return tA - tB;
+      if (tA && !tB) return -1;
+      if (!tA && tB) return 1;
+      return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
+    });
+
+    // 4. Fetch group entries
+    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
+    const groupRes = await fetch(groupUrl, { cache: 'no-store' });
+    const gData = groupRes.ok ? await groupRes.json() : {};
+    const entries = gData.entries || [];
+    const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
+
+    const users = []; 
+    const userNames = {}; 
+    let myUser = null;
+    const otherUsers = [];
+    const pickMap = {};
+    const userYearlyScores = {};
+    const userPeriodScores = {};
+
+    function extractScore(obj) {
+      if (obj === null || obj === undefined) return null;
+      if (typeof obj === 'number') return obj;
+      if (typeof obj.value === 'number') return obj.value;
+      if (typeof obj.score === 'number') return obj.score;
+      if (typeof obj.points === 'number') return obj.points;
+      if (typeof obj.overallScore === 'number') return obj.overallScore;
+      if (typeof obj.totalPoints === 'number') return obj.totalPoints;
+      if (typeof obj === 'string') {
+        const parsed = parseFloat(obj);
+        if (!isNaN(parsed)) return parsed;
+      }
+      return null;
+    }
+
+    const entryPromises = entries.map(async (e) => {
+      const entryId = String(e.id);
+      const userName = e.name || e.member?.displayName || `Entry ${entryId.slice(0, 6)}`;
+      let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
+
+      const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
+      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
+      const eRes = await fetch(entryUrl, { cache: 'no-store' });
+      if (!eRes.ok) return { entryId, userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
+      const eData = await eRes.json();
+
+      if (scoreVal === null) {
+        scoreVal = extractScore(eData.score) ?? extractScore(eData.points) ?? extractScore(eData.overallScore) ?? extractScore(eData) ?? 0;
+      }
+
+      const periodScores = {};
+      const sources = [
+        eData.scoreByPeriod,              
+        e.scoreByPeriod,
+        eData.score?.scoreByPeriod, 
+        eData.scores,
+        eData.score?.scoresByScoringPeriod,
+        eData.scoresByScoringPeriod,
+        e.scores,
+        e.score?.scoresByScoringPeriod,
+        e.scoresByScoringPeriod,
+        eData.periodPoints,
+        e.periodPoints
+      ];
+
+      for (const src of sources) {
+        if (!src) continue;
+        if (Array.isArray(src)) {
+          src.forEach(item => {
+            const pId = item?.scoringPeriodId ?? item?.periodId ?? item?.period;
+            const val = extractScore(item);
+            if (pId !== undefined && val !== null) periodScores[Number(pId)] = val;
+          });
+        } else if (typeof src === 'object') {
+          Object.entries(src).forEach(([k, item]) => {
+            const val = extractScore(item);
+            if (val !== null) periodScores[Number(k)] = val;
+          });
+        }
+      }
+
+      return { entryId, userName, picks: eData.picks || [], scoreVal: scoreVal || 0, periodScores };
+    });
+
+    const settled = await Promise.all(entryPromises);
+
+    settled.forEach(({ entryId, userName, picks, scoreVal, periodScores }) => {
+      userNames[entryId] = userName; 
+      userYearlyScores[entryId] = scoreVal;
+      userPeriodScores[entryId] = periodScores || {};
+
+      if (userName.toLowerCase().replace(/\s+/g, '').includes('posaparty')) {
+        myUser = entryId;
+      } else {
+        otherUsers.push(entryId);
+      }
+      users.push(entryId);
+      pickMap[entryId] = {};
+
+      picks.forEach(p => {
+        const propId = String(p.propositionId || '');
+        const propInfo = propMap[propId];
+        if (!propInfo) return;
+
+        const rawOutcome = String(p.outcomesPicked?.[0]?.outcomeId || p.outcomeId || p.outcome?.id || '');
+        const clean = rawOutcome.toLowerCase().replace(/[^a-z0-9]/gi, '');
+
+        let side = null;
+        if (propInfo.outcomeAwayId && (String(propInfo.outcomeAwayId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeAwayId)))) {
+          side = 'away';
+        } else if (propInfo.outcomeHomeId && (String(propInfo.outcomeHomeId) === rawOutcome || rawOutcome.includes(String(propInfo.outcomeHomeId)))) {
+          side = 'home';
+        }
+
+        if (!side) {
+          if (clean.length >= 8) {
+            const char = clean.charAt(7);
+            if (char === '1') side = 'away';
+            if (char === '2') side = 'home';
+          }
+        }
+        if (!side) {
+          if (clean.endsWith('1')) side = 'away';
+          else if (clean.endsWith('2')) side = 'home';
+        }
+
+        pickMap[entryId][propId] = {
+          side,
+          pts: p.confidenceScore || null
+        };
+      });
+    });
+
+    if (!myUser && otherUsers.length > 0) {
+      myUser = otherUsers[0];
+    }
+
+    const rawSha = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'live').slice(0, 7);
+    const buildHash = `${rawSha}-v14`;
+
+    return NextResponse.json({
+      myUser,
+      otherUsers,
+      userNames, 
+      weekNumber: activeWeek,
+      currentWeek: currentWeek, 
+      activeProps: contestPropIds,
+      propMap,
+      pickMap,
+      userYearlyScores,
+      userPeriodScores,
+      buildHash
+    });
+  } catch (err) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
