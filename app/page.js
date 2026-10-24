@@ -535,7 +535,7 @@ export default function MatrixDashboard() {
                           <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
                             {propInfo.awayLogo && <img src={propInfo.awayLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>{awayLabel}</span>
-                            {isLive && sc?.possession === 'away' && <span style={{ fontSize: '10px', marginLeft: '4px' }} title="Has Possession">🏈</span>}
+                            {isLive && sc?.possession === 'away' && <span style={{ fontSize: '9px', marginLeft: '4px' }} title="Possession">🏈</span>}
                             {isAwayFav && <span style={{ color: '#fef08a', fontSize: '9px', fontWeight: 800, marginLeft: '4px' }}>{lineSpread}</span>}
                           </span>
                           <span style={{ minWidth: '18px', textAlign: 'right' }}>{isPreGame ? '' : (sc?.awayScore ?? '')}</span>
@@ -546,32 +546,26 @@ export default function MatrixDashboard() {
                           <span style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
                             {propInfo.homeLogo && <img src={propInfo.homeLogo} alt="" className="team-logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                             <span>@{homeLabel}</span>
-                            {isLive && sc?.possession === 'home' && <span style={{ fontSize: '10px', marginLeft: '4px' }} title="Has Possession">🏈</span>}
+                            {isLive && sc?.possession === 'home' && <span style={{ fontSize: '9px', marginLeft: '4px' }} title="Possession">🏈</span>}
                             {isHomeFav && <span style={{ color: '#fef08a', fontSize: '9px', fontWeight: 800, marginLeft: '4px' }}>{lineSpread}</span>}
                           </span>
                           <span style={{ minWidth: '18px', textAlign: 'right' }}>{isPreGame ? '' : (sc?.homeScore ?? '')}</span>
                         </div>
                         
-                        {/* Status Row (Clock, TV, Field Position) */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '3px' }}>
+                        {/* Status Row (Clock, TV, Clean Down & Distance) */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', marginTop: '3px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px', fontWeight: 600 }}>
                             <span style={{ color: isLive ? '#ef4444' : (isFinal ? '#64748b' : '#38bdf8'), display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                               <span>{isLive ? '🔴 ' + sc.statusDetail : (isFinal ? (sc.statusDetail || 'Final') : formatDeviceTime(propInfo))}</span>
-                              {propInfo.tv && <span style={{ color: '#cbd5e1', fontSize: '8px', background: 'rgba(255,255,255,0.12)', padding: '1px 4px', borderRadius: '3px', fontWeight: 700 }}>📺 {propInfo.tv}</span>}
+                              {propInfo.tv && <span style={{ color: '#cbd5e1', fontSize: '8px', background: 'rgba(255,255,255,0.1)', padding: '1px 4px', borderRadius: '3px', fontWeight: 700 }}>📺 {propInfo.tv}</span>}
                             </span>
                             {(counts.away > 0 || counts.home > 0) ? <span style={{ color: '#94a3b8', flexShrink: 0 }}>📊 {counts.away}-{counts.home}</span> : <span style={{ color: '#64748b', fontSize: '8px' }}>🔒 At kick</span>}
                           </div>
                           
-                          {/* Live Field Position / Last Play Summary */}
+                          {/* Clean Down & Distance / Yard Line */}
                           {isLive && sc?.situationSummary && (
-                            <div style={{ 
-                              display: 'flex', alignItems: 'center', gap: '3px', fontSize: '8.5px', fontWeight: 700, 
-                              color: sc.isRedZone ? '#fca5a5' : '#fcd34d',
-                              background: sc.isRedZone ? 'rgba(239, 68, 68, 0.18)' : 'rgba(250, 204, 21, 0.1)',
-                              padding: '1px 4px', borderRadius: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                            }}>
-                              <span>{sc.isRedZone ? '🚨' : '📍'}</span>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sc.situationSummary}</span>
+                            <div style={{ fontSize: '8.5px', fontWeight: 600, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {sc.situationSummary}
                             </div>
                           )}
                         </div>
