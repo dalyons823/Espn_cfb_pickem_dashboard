@@ -82,27 +82,66 @@ export async function GET(request) {
           const awayTeamId = String(away?.team?.id || away?.id || '');
           const homeTeamId = String(home?.team?.id || home?.id || '');
 
-          // Extract strictly possession, down/distance, and yard line
+          // Extract possession, down/distance, and yard line with deep fallbacks
           let possession = null;
           let situationSummary = '';
 
           if (situation) {
-            const possId = String(situation.possession || '');
+            const endState = situation.lastPlay?.end || {};
+            const startState = situation.lastPlay?.start || {};
+
+            const possId = String(
+              situation.possession ||
+              endState.team?.id ||
+              situation.lastPlay?.team?.id ||
+              ''
+            );
             if (possId && awayTeamId && possId === awayTeamId) possession = 'away';
             else if (possId && homeTeamId && possId === homeTeamId) possession = 'home';
 
-            const shortDown = situation.shortDownDistanceText || '';
-            const fullDown = situation.downDistanceText || '';
-            const yardLine = situation.possessionText || '';
+            // 1. Resolve Down & Distance (top-level -> lastPlay.end -> numeric down/distance)
+            let shortDown = situation.shortDownDistanceText || endState.shortDownDistanceText || '';
+            if (!shortDown) {
+              const rawDown = situation.down ?? endState.down;
+              const rawDist = situation.distance ?? endState.distance;
+              const ordinals = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
+              if (ordinals[rawDown] && rawDist !== undefined && rawDist > 0) {
+                shortDown = `${ordinals[rawDown]} & ${rawDist}`;
+              }
+            }
 
+            // 2. Resolve Field Position / Yard Line
+            let yardLine = situation.possessionText || endState.possessionText || startState.possessionText || '';
+            const fullDown = situation.downDistanceText || endState.downDistanceText || '';
+            if (!yardLine && fullDown.includes(' at ')) {
+              yardLine = fullDown.split(' at ')[1]?.trim() || '';
+            }
+            if (!yardLine) {
+              const rawYd = situation.yardLine ?? endState.yardLine;
+              if (typeof rawYd === 'number' && rawYd > 0 && rawYd < 100) {
+                yardLine = `${rawYd} yd line`;
+              }
+            }
+
+            // 3. Assemble clean display string
             if (shortDown && yardLine) {
               situationSummary = `${shortDown} • ${yardLine}`;
             } else if (fullDown) {
-              situationSummary = fullDown;
+              situationSummary = fullDown.replace(' at ', ' • ');
             } else if (shortDown) {
               situationSummary = shortDown;
             } else if (yardLine) {
-              situationSummary = yardLine;
+              situationSummary = `Ball on ${yardLine}`;
+            } else if (state === 'in') {
+              // Fallback when between drives (after a score/PAT/Kickoff)
+              const playType = (situation.lastPlay?.type?.text || '').toLowerCase();
+              if (playType.includes('touchdown') || playType.includes('field goal') || playType.includes('pat') || playType.includes('extra point')) {
+                situationSummary = 'Kickoff Pending';
+              } else if (playType.includes('kickoff')) {
+                situationSummary = '1st & 10 Pending';
+              } else if (playType.includes('timeout')) {
+                situationSummary = 'Timeout';
+              }
             }
           }
 
@@ -424,7 +463,7 @@ export async function GET(request) {
     }
 
     const rawSha = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'live').slice(0, 7);
-    const buildHash = `${rawSha}-v14`;
+    const buildHash = `${rawSha}-v15`;
 
     return NextResponse.json({
       myUser,
