@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 const CHALLENGE_SLUG = process.env.NEXT_PUBLIC_ESPN_CHALLENGE_SLUG || "college-football-pickem-2026";
 const GROUP_ID = process.env.NEXT_PUBLIC_ESPN_GROUP_ID || "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
 
@@ -77,20 +79,35 @@ export async function GET(request) {
             else leader = 'tie';
           }
 
-          // NEW: Extract possession and field position data
+          const awayTeamId = String(away?.team?.id || away?.id || '');
+          const homeTeamId = String(home?.team?.id || home?.id || '');
+
+          // Extract possession, down/distance, yard line, and last play fallback
           let possession = null;
-          let downDistanceText = '';
-          let possessionText = '';
+          let situationSummary = '';
           let isRedZone = false;
 
           if (situation) {
-            if (situation.possession) {
-              if (away && situation.possession === away.team?.id) possession = 'away';
-              if (home && situation.possession === home.team?.id) possession = 'home';
+            const possId = String(situation.possession || situation.lastPlay?.team?.id || '');
+            if (possId && awayTeamId && possId === awayTeamId) possession = 'away';
+            else if (possId && homeTeamId && possId === homeTeamId) possession = 'home';
+
+            const shortDown = situation.shortDownDistanceText || '';
+            const fullDown = situation.downDistanceText || '';
+            const yardLine = situation.possessionText || '';
+            const lastPlayText = situation.lastPlay?.text || '';
+
+            if (shortDown && yardLine) {
+              situationSummary = `${shortDown} at ${yardLine}`;
+            } else if (fullDown) {
+              situationSummary = fullDown;
+            } else if (yardLine) {
+              situationSummary = `Ball on ${yardLine}`;
+            } else if (lastPlayText) {
+              situationSummary = lastPlayText.length > 42 ? `${lastPlayText.slice(0, 42)}...` : lastPlayText;
             }
-            downDistanceText = situation.shortDownDistanceText || situation.downDistanceText || '';
-            possessionText = situation.possessionText || '';
-            isRedZone = situation.isRedZone || false;
+
+            isRedZone = Boolean(situation.isRedZone);
           }
 
           const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
@@ -102,9 +119,16 @@ export async function GET(request) {
           const lineDetails = oddsObj?.details || '';
           const overUnder = oddsObj?.overUnder ? `O/U ${oddsObj.overUnder}` : '';
 
+          // Check all 3 ESPN broadcast paths
           let tvNetwork = '';
-          if (comp.broadcasts && comp.broadcasts.length > 0) {
-             tvNetwork = comp.broadcasts[0].names?.join(', ') || '';
+          if (typeof comp.broadcast === 'string' && comp.broadcast.trim()) {
+            tvNetwork = comp.broadcast.trim();
+          } else if (Array.isArray(comp.broadcasts) && comp.broadcasts.length > 0) {
+            const names = comp.broadcasts.flatMap(b => b.names || []).filter(Boolean);
+            if (names.length > 0) tvNetwork = names[0];
+          } else if (Array.isArray(comp.geoBroadcasts) && comp.geoBroadcasts.length > 0) {
+            const mediaName = comp.geoBroadcasts.map(g => g.media?.shortName).filter(Boolean);
+            if (mediaName.length > 0) tvNetwork = mediaName[0];
           }
 
           const collectNames = (teamObj) => {
@@ -141,8 +165,7 @@ export async function GET(request) {
               awayAbbr,
               homeAbbr,
               possession,
-              downDistanceText,
-              possessionText,
+              situationSummary,
               isRedZone
             }
           };
@@ -405,7 +428,8 @@ export async function GET(request) {
       myUser = otherUsers[0];
     }
 
-    const buildHash = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'v12-live-situation').slice(0, 7);
+    const rawSha = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'live').slice(0, 7);
+    const buildHash = `${rawSha}-v13`;
 
     return NextResponse.json({
       myUser,
