@@ -1,65 +1,88 @@
 import { NextResponse } from 'next/server';
 
-export const dynamic = 'force-dynamic';
-
 const CHALLENGE_SLUG = process.env.NEXT_PUBLIC_ESPN_CHALLENGE_SLUG || "college-football-pickem-2026";
 const GROUP_ID = process.env.NEXT_PUBLIC_ESPN_GROUP_ID || "c57ecf8d-d7fd-3702-8bd3-29159f25ece2";
+
+// Persistent in-memory caches across warm Fluid Compute invocations
+const responseCache = new Map(); // weekKey -> { timestamp, payload }
+const finalWinProbCache = new Map(); // eventId -> number[]
+let cachedCurrentWeek = { week: 6, timestamp: 0, propsByWeek: new Map() };
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const requestedWeek = searchParams.get('week');
-    
-    let activeWeek = 6;
-    let currentWeek = 6;
-    let activeProps = [];
+    const forceRefresh = searchParams.get('force') === '1';
+    const now = Date.now();
 
-    const chalResCurrent = await fetch(
-      `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&_=${Date.now()}`,
-      { cache: 'no-store' }
-    );
+    // 1. Check in-memory response cache first (protects CPU even if query params vary)
+    const cacheKey = requestedWeek ? `wk_${requestedWeek}` : 'wk_current';
+    const cached = responseCache.get(cacheKey);
+    const isPastWeekRequest = requestedWeek && cachedCurrentWeek.week && Number(requestedWeek) < cachedCurrentWeek.week;
+    const ttl = isPastWeekRequest ? 600_000 : 30_000; // 10 min for past weeks, 30s for active week
 
-    if (chalResCurrent.ok) {
-      const chalDataCurrent = await chalResCurrent.json();
-      currentWeek = chalDataCurrent.currentScoringPeriod?.id || 6;
-      activeWeek = requestedWeek ? Number(requestedWeek) : currentWeek;
-      
-      let allProps = [];
-
-      if (activeWeek === currentWeek) {
-        allProps = chalDataCurrent.propositions || [];
-      } else {
-        const chalResPast = await fetch(
-          `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&scoringPeriodId=${activeWeek}&_=${Date.now()}`,
-          { cache: 'no-store' }
-        );
-        if (chalResPast.ok) {
-          const pastData = await chalResPast.json();
-          allProps = pastData.propositions || [];
+    if (!forceRefresh && cached && (now - cached.timestamp < ttl)) {
+      return NextResponse.json(cached.payload, {
+        headers: {
+          'Cache-Control': isPastWeekRequest
+            ? 'public, s-maxage=600, stale-while-revalidate=1200'
+            : 'public, s-maxage=30, stale-while-revalidate=30'
         }
-      }
-      
-      activeProps = allProps.filter(p => {
-        const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
-        if (Number(spId) !== Number(activeWeek)) return false;
-        if (p.scoringFormatIds && Array.isArray(p.scoringFormatIds)) {
-          return p.scoringFormatIds.includes(2) || p.scoringFormatIds.includes("2");
-        }
-        return false;
       });
     }
 
+    let activeWeek = 6;
+    let currentWeek = cachedCurrentWeek.week || 6;
+    let activeProps = [];
+
+    // 2. Fetch challenge propositions (cached for 10 minutes since slates don't change mid-week)
+    if (now - cachedCurrentWeek.timestamp > 600_000 || !cachedCurrentWeek.propsByWeek.size) {
+      const chalResCurrent = await fetch(
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks`,
+        { next: { revalidate: 600 } }
+      );
+      if (chalResCurrent.ok) {
+        const chalDataCurrent = await chalResCurrent.json();
+        currentWeek = chalDataCurrent.currentScoringPeriod?.id || 6;
+        cachedCurrentWeek.week = currentWeek;
+        cachedCurrentWeek.timestamp = now;
+        cachedCurrentWeek.propsByWeek.set(currentWeek, chalDataCurrent.propositions || []);
+      }
+    }
+
+    activeWeek = requestedWeek ? Number(requestedWeek) : currentWeek;
+
+    if (!cachedCurrentWeek.propsByWeek.has(activeWeek)) {
+      const chalResPast = await fetch(
+        `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}?view=chui_pagetype_make_picks&scoringPeriodId=${activeWeek}`,
+        { next: { revalidate: 3600 } }
+      );
+      if (chalResPast.ok) {
+        const pastData = await chalResPast.json();
+        cachedCurrentWeek.propsByWeek.set(activeWeek, pastData.propositions || []);
+      }
+    }
+
+    const allProps = cachedCurrentWeek.propsByWeek.get(activeWeek) || [];
+    activeProps = allProps.filter(p => {
+      const spId = p.scoringPeriodId || p.scoringPeriod?.id || p.scoringPeriod;
+      if (Number(spId) !== Number(activeWeek)) return false;
+      if (p.scoringFormatIds && Array.isArray(p.scoringFormatIds)) {
+        return p.scoringFormatIds.includes(2) || p.scoringFormatIds.includes("2");
+      }
+      return false;
+    });
+
+    // 3. Fetch FBS Scoreboard (WITHOUT fetching 80 summary endpoints yet!)
     let scoreboardEvents = [];
     try {
       const sbRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}&_=${Date.now()}`,
-        { cache: 'no-store' }
+        `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&week=${activeWeek}`,
+        { next: { revalidate: 30 } }
       );
       if (sbRes.ok) {
         const sbData = await sbRes.json();
-        
-        // Fetch win probabilities concurrently for live/completed games
-        scoreboardEvents = await Promise.all((sbData.events || []).map(async (ev) => {
+        scoreboardEvents = (sbData.events || []).map((ev) => {
           const comp = ev.competitions?.[0];
           if (!comp) return null;
           const away = comp.competitors?.find(c => c.homeAway === 'away');
@@ -140,20 +163,6 @@ export async function GET(request) {
             }
           }
 
-          // Fetch win probability time series if game is live or finished
-          let winProbHistory = [];
-          if (!isPre) {
-            try {
-              const sumRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=${ev.id}`, { cache: 'no-store' });
-              if (sumRes.ok) {
-                const sumData = await sumRes.json();
-                const wpArray = sumData.winprobability || [];
-                // Map home win percentage (0 to 1 -> 0 to 100)
-                winProbHistory = wpArray.map(wp => typeof wp.homeWinPercentage === 'number' ? Math.round(wp.homeWinPercentage * 100) : 50);
-              }
-            } catch (e) {}
-          }
-
           const awayAbbr = away?.team?.abbreviation || away?.team?.shortDisplayName || '';
           const homeAbbr = home?.team?.abbreviation || home?.team?.shortDisplayName || '';
           const awayLogo = away?.team?.logo || away?.team?.logos?.[0]?.href || '';
@@ -209,11 +218,10 @@ export async function GET(request) {
               homeAbbr,
               possession,
               situationSummary,
-              winProbHistory
+              winProbHistory: []
             }
           };
-        }));
-        scoreboardEvents = scoreboardEvents.filter(Boolean);
+        }).filter(Boolean);
       }
     } catch (e) {
       console.error("Scoreboard fetch error:", e);
@@ -230,8 +238,10 @@ export async function GET(request) {
       return false;
     }
 
+    // 4. Match ONLY the 10 Pick'em games first
     const propMap = {};
     const contestPropIds = [];
+    const matchedEventsToFetchSummary = [];
 
     activeProps.forEach(rawProp => {
       if (!rawProp || !rawProp.id) return;
@@ -252,6 +262,10 @@ export async function GET(request) {
           matchedEvent = ev;
           break;
         }
+      }
+
+      if (matchedEvent && matchedEvent.scoreInfo.state !== 'pre') {
+        matchedEventsToFetchSummary.push(matchedEvent);
       }
 
       let winner = null;
@@ -331,6 +345,34 @@ export async function GET(request) {
       };
     });
 
+    // 5. Fetch Win Probability ONLY for the <=10 matched Pick'em games (and cache finished games permanently!)
+    await Promise.all(matchedEventsToFetchSummary.map(async (ev) => {
+      if (finalWinProbCache.has(ev.id)) {
+        ev.scoreInfo.winProbHistory = finalWinProbCache.get(ev.id);
+        return;
+      }
+      try {
+        const sumRes = await fetch(
+          `https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=${ev.id}`,
+          { next: { revalidate: ev.scoreInfo.state === 'post' ? 86400 : 30 } }
+        );
+        if (sumRes.ok) {
+          const sumData = await sumRes.json();
+          const wpArray = sumData.winprobability || [];
+          // Downsample to max ~40 points to save JSON payload & SVG math
+          const step = Math.max(1, Math.floor(wpArray.length / 40));
+          const history = wpArray
+            .filter((_, idx) => idx % step === 0 || idx === wpArray.length - 1)
+            .map(wp => typeof wp.homeWinPercentage === 'number' ? Math.round(wp.homeWinPercentage * 100) : 50);
+
+          ev.scoreInfo.winProbHistory = history;
+          if (ev.scoreInfo.state === 'post' && history.length > 1) {
+            finalWinProbCache.set(ev.id, history);
+          }
+        }
+      } catch (e) {}
+    }));
+
     contestPropIds.sort((a, b) => {
       const tA = propMap[a]?.kickoffTime || 0;
       const tB = propMap[b]?.kickoffTime || 0;
@@ -340,8 +382,9 @@ export async function GET(request) {
       return (propMap[a]?.title || '').localeCompare(propMap[b]?.title || '');
     });
 
-    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
-    const groupRes = await fetch(groupUrl, { cache: 'no-store' });
+    // 6. Fetch group entries (revalidates every 30s instead of uncached on every hit)
+    const groupUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${CHALLENGE_SLUG}/groups/${GROUP_ID}?view=mGroup&view=mSettings&view=mScoreboard&scoringPeriodId=${activeWeek}`;
+    const groupRes = await fetch(groupUrl, { next: { revalidate: 30 } });
     const gData = groupRes.ok ? await groupRes.json() : {};
     const entries = gData.entries || [];
     const challengeId = gData.challengeId || gData.challenge?.id || CHALLENGE_SLUG;
@@ -375,8 +418,8 @@ export async function GET(request) {
       let scoreVal = extractScore(e.score) ?? extractScore(e.points) ?? extractScore(e.overallScore) ?? extractScore(e);
 
       const fetchSlug = challengeId ? challengeId : CHALLENGE_SLUG;
-      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&scoringPeriodId=${activeWeek}&_=${Date.now()}`;
-      const eRes = await fetch(entryUrl, { cache: 'no-store' });
+      const entryUrl = `https://gambit-api.fantasy.espn.com/apis/v1/challenges/${fetchSlug}/entries/${e.id}?view=mScoreboard&scoringPeriodId=${activeWeek}`;
+      const eRes = await fetch(entryUrl, { next: { revalidate: 60 } });
       if (!eRes.ok) return { entryId, userName, picks: [], scoreVal: scoreVal || 0, periodScores: {} };
       const eData = await eRes.json();
 
@@ -472,9 +515,9 @@ export async function GET(request) {
     }
 
     const rawSha = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'live').slice(0, 7);
-    const buildHash = `${rawSha}-v16`;
+    const buildHash = `${rawSha}-v17-opt`;
 
-    return NextResponse.json({
+    const payload = {
       myUser,
       otherUsers,
       userNames, 
@@ -486,6 +529,16 @@ export async function GET(request) {
       userYearlyScores,
       userPeriodScores,
       buildHash
+    };
+
+    responseCache.set(cacheKey, { timestamp: Date.now(), payload });
+
+    return NextResponse.json(payload, {
+      headers: {
+        'Cache-Control': isPastWeekRequest
+          ? 'public, s-maxage=600, stale-while-revalidate=1200'
+          : 'public, s-maxage=30, stale-while-revalidate=30'
+      }
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });

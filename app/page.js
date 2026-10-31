@@ -91,10 +91,15 @@ export default function MatrixDashboard() {
 
   const [selectedWeekParam, setSelectedWeekParam] = useState(null);
 
-  const fetchPicks = async (isBackground = false, targetWeek = null) => {
+  const fetchPicks = async (isBackground = false, targetWeek = null, force = false) => {
     try {
       if (!isBackground) setLoading(true);
-      const url = `/api/picks?_=${Date.now()}${targetWeek ? `&week=${targetWeek}` : ''}`;
+      const params = new URLSearchParams();
+      if (targetWeek) params.set('week', targetWeek);
+      if (force) params.set('force', '1');
+      const queryStr = params.toString();
+      const url = `/api/picks${queryStr ? `?${queryStr}` : ''}`;
+
       const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to load picks');
       const json = await res.json();
@@ -129,12 +134,29 @@ export default function MatrixDashboard() {
     weekRef.current = selectedWeekParam;
   }, [selectedWeekParam]);
 
+  // Smart Polling: 45s when live games are active, 5 mins when idle, paused when tab is hidden
+  const hasLiveGames = (data?.activeProps || []).some(prId => data?.propMap?.[prId]?.score?.state === 'in');
+
   useEffect(() => {
+    const intervalMs = hasLiveGames ? 45000 : 300000; // 45s live, 5m idle
+
     const refreshInterval = setInterval(() => {
-      fetchPicks(true, weekRef.current);
-    }, 45000);
-    return () => clearInterval(refreshInterval);
-  }, []);
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchPicks(true, weekRef.current, false);
+    }, intervalMs);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchPicks(true, weekRef.current, false);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearInterval(refreshInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [hasLiveGames]);
 
   useEffect(() => {
     const ticker = setInterval(() => {
@@ -154,7 +176,7 @@ export default function MatrixDashboard() {
 
   const handleWeekChange = (w) => {
     setSelectedWeekParam(w);
-    fetchPicks(false, w);
+    fetchPicks(false, w, false);
   };
 
   const { 
@@ -172,10 +194,6 @@ export default function MatrixDashboard() {
     const raw = pickObj.side === 'away' ? propInfo.away : propInfo.home;
     return formatAbbr(raw);
   };
-
-  const hasLiveGames = activeProps.some(prId => propMap[prId]?.score?.state === 'in');
-  const hasUpcomingGames = activeProps.some(prId => !propMap[prId]?.score?.state || propMap[prId]?.score?.state === 'pre');
-  const isWeekOver = activeProps.length > 0 && !hasLiveGames && !hasUpcomingGames;
 
   const formatDeviceTime = (propInfo) => {
     const dateVal = propInfo?.kickoffDate || propInfo?.kickoffTime;
@@ -488,7 +506,7 @@ export default function MatrixDashboard() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span style={{ fontSize: '9px', color: isOffline ? '#ef4444' : '#64748b', fontWeight: 600, whiteSpace: 'nowrap' }}>{isOffline ? '⚠️ Offline' : timeAgo}</span>
-          <button onClick={() => fetchPicks(false, weekNumber)} title="Refresh" style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
+          <button onClick={() => fetchPicks(false, weekNumber, true)} title="Refresh" style={{ background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>🔄</button>
           <button onClick={exportCSV} title="Export CSV" style={{ background: '#334155', border: '1px solid #475569', color: '#fff', borderRadius: '6px', padding: '4px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>📥</button>
         </div>
       </div>
